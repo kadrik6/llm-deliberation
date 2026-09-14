@@ -144,15 +144,58 @@ machine, and it only resolves to anything while you have
 ## Quick start
 
 Requires Python 3.11+ and API keys for OpenAI and Anthropic (Gemini only
-if you plan to use the red-team stage).
+if you plan to use the red-team stage). **Primary tested setup: Windows
+11 + WSL2 (Ubuntu).** Other environments may work, but this is the only
+one actually tested.
+
+### Windows (WSL2 Ubuntu)
+
+Open an **Ubuntu/WSL terminal** -- not PowerShell, not Command Prompt --
+and run everything below inside it:
+
+```bash
+git clone https://github.com/kadrik6/llm-deliberation.git
+cd llm-deliberation
+
+python3 -m venv .venv
+source .venv/bin/activate
+
+pip install -e .
+
+cp .env.example .env
+# edit .env and add OPENAI_API_KEY / ANTHROPIC_API_KEY / (optional) GEMINI_API_KEY
+
+llm-deliberate-ui
+```
+
+This matters because these are Bash commands for a WSL/Ubuntu shell, not
+PowerShell: `source .venv/bin/activate` only works in a Unix-style
+shell, so pasting these into PowerShell or Command Prompt will fail
+partway through. Native Windows (PowerShell) isn't the primary tested
+path yet.
+
+`llm-deliberate-ui` starts a server inside WSL -- you don't need a
+browser inside WSL itself. Once it's running, open your normal
+**Windows** browser and go to `http://127.0.0.1:8765`; WSL2 forwards
+that port to Windows automatically. See [Local web UI](#local-web-ui)
+below for what that address is and isn't.
+
+No WSL2 + Ubuntu yet? Install that first --
+[Microsoft's WSL install guide](https://learn.microsoft.com/windows/wsl/install)
+covers it; that setup itself is outside the scope of this README.
+
+### Other environments
+
+These paths are not as thoroughly tested as Windows 11 + WSL2 Ubuntu,
+above.
 
 ```bash
 git clone https://github.com/kadrik6/llm-deliberation.git
 cd llm-deliberation
 
 python -m venv .venv
-source .venv/bin/activate        # macOS / Linux / WSL
-# .venv\Scripts\Activate.ps1     # Windows PowerShell
+source .venv/bin/activate        # macOS / Linux
+# .venv\Scripts\Activate.ps1     # native Windows PowerShell (untested)
 
 pip install -e ".[dev]"
 
@@ -167,7 +210,7 @@ llm-deliberate --profile economy --no-red-team \
   "Should a small team build this product now, delay it, or reject it?"
 ```
 
-**Local web UI:**
+### Local web UI
 
 ```bash
 llm-deliberate-ui
@@ -177,9 +220,12 @@ llm-deliberate-ui
 `http://127.0.0.1:8765` is a **local address, not a hosted URL** -- it
 only exists while the command above is running on your own machine. There
 is no public/hosted version of this UI to visit instead (see
-[Demo](#demo)). The web UI binds to `127.0.0.1` only and has no
-authentication -- it is built for single-user local use. See
-[`docs/trust-model.md`](docs/trust-model.md).
+[Demo](#demo)). If you're on the primary tested setup (Windows 11 +
+WSL2), that "own machine" is WSL -- the server runs there, but the
+address still opens the same way in your normal Windows browser; WSL2
+forwards the port automatically, no extra setup needed. The web UI binds
+to `127.0.0.1` only and has no authentication -- it is built for
+single-user local use. See [`docs/trust-model.md`](docs/trust-model.md).
 
 ## Profiles
 
