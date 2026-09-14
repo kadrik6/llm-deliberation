@@ -262,6 +262,29 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
 
     @app.post("/runs/{run_id}/stages/{stage}/retry")
     async def retry_stage(
+        request: Request,
+        run_id: str,
+        stage: str,
+        background_tasks: BackgroundTasks,
+        mode: str = Form("chain"),
+    ):
+        svc: DeliberationService = request.app.state.service
+        try:
+            stage_record = svc.repo.get_stage(run_id, stage)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Stage not found")
+        if mode not in ("chain", "preferred_only"):
+            raise HTTPException(status_code=400, detail=f"Unknown retry mode: {mode!r}")
+        if mode != "chain" and stage_record.name != "red_team":
+            raise HTTPException(
+                status_code=400,
+                detail=f"mode={mode!r} only applies to the red_team stage.",
+            )
+        schedule(background_tasks, run_id, svc.retry_stage(run_id, stage, gemini_mode=mode))
+        return RedirectResponse(url=f"/runs/{run_id}", status_code=303)
+
+    @app.post("/runs/{run_id}/stages/{stage}/skip")
+    async def skip_stage(
         request: Request, run_id: str, stage: str, background_tasks: BackgroundTasks
     ):
         svc: DeliberationService = request.app.state.service
@@ -269,7 +292,7 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
             svc.repo.get_stage(run_id, stage)
         except KeyError:
             raise HTTPException(status_code=404, detail="Stage not found")
-        schedule(background_tasks, run_id, svc.retry_stage(run_id, stage))
+        schedule(background_tasks, run_id, svc.skip_stage(run_id, stage))
         return RedirectResponse(url=f"/runs/{run_id}", status_code=303)
 
     # -- export / history -------------------------------------------------

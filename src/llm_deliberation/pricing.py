@@ -13,6 +13,12 @@ PRICING: dict[str, tuple[float, float]] = {
     "claude-opus-5": (5.00, 25.00),
     "claude-sonnet-5": (2.00, 10.00),
     "gemini-3.8-flash": (0.75, 3.75),
+    # Older Gemini fallback models. Estimated from the 3.8-flash rate card
+    # pending confirmed pricing -- update when known. Deliberately not
+    # omitted: an unpriced fallback model would silently report $0.00 and
+    # hide real spend from the run total (see docs/architecture.md).
+    "gemini-3.7-flash": (0.60, 3.00),
+    "gemini-3.6-flash": (0.50, 2.50),
 }
 
 

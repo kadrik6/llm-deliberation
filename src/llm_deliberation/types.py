@@ -22,6 +22,14 @@ class ModelResponse:
     text: str
     usage: Usage = field(default_factory=Usage)
     estimated_cost_usd: float = 0.0
+    # Provenance for providers that may substitute a fallback model (see
+    # GeminiFallbackProvider). For a stage that never falls back,
+    # requested_model == model and fallback_used is False.
+    requested_model: str | None = None
+    fallback_used: bool = False
+    fallback_reason: str | None = None
+    model_attempts: int = 1
+    attempt_log: list[dict] | None = None
 
 
 @dataclass(slots=True)

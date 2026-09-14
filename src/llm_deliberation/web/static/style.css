@@ -193,11 +193,13 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 .stage-label { flex: 0 0 auto; min-width: 10rem; }
 .stage-note { color: var(--text-muted); font-size: 0.85rem; }
 .stage-error { color: var(--danger); font-size: 0.85rem; }
+.stage-fallback-note { color: var(--text-muted); font-size: 0.85rem; flex-basis: 100%; }
 
 .status-pending .stage-symbol { color: var(--pending); }
 .status-running .stage-symbol { color: var(--running); }
 .status-succeeded .stage-symbol { color: var(--ok); }
 .status-failed .stage-symbol { color: var(--danger); }
+.status-skipped .stage-symbol, .status-skipped .stage-label { color: var(--text-muted); }
 .status-disabled .stage-symbol, .status-disabled .stage-label { color: var(--pending); }
 
 .run-status-banner {
@@ -263,6 +265,7 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 
 .artifact-meta { color: var(--text-muted); font-size: 0.85rem; margin: 0; }
+.artifact-fallback-note { color: var(--text-muted); font-size: 0.85rem; margin: 0.35rem 0 0; }
 
 .history-table {
   width: 100%;

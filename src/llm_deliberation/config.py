@@ -28,11 +28,28 @@ PROFILES = {
 }
 
 
+# Applied only when GEMINI_FALLBACK_MODELS is unset entirely. Set the env
+# var to an empty string to disable fallback and only ever try GEMINI_MODEL.
+DEFAULT_GEMINI_FALLBACK_MODELS: tuple[str, ...] = ("gemini-3.7-flash", "gemini-3.6-flash")
+
+
 def _bool_env(name: str, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_model_chain(raw: str | None) -> list[str]:
+    """Parse a comma-separated model list, deduping while preserving order."""
+    if not raw:
+        return []
+    seen: list[str] = []
+    for part in raw.split(","):
+        model = part.strip()
+        if model and model not in seen:
+            seen.append(model)
+    return seen
 
 
 def default_red_team_enabled() -> bool:
@@ -53,6 +70,7 @@ class Settings:
     openai_model: str
     anthropic_model: str
     gemini_model: str
+    gemini_fallback_models: list[str]
     openai_effort: str
     anthropic_effort: str
     gemini_thinking_level: str
@@ -79,12 +97,23 @@ class Settings:
             else _bool_env("RED_TEAM_ENABLED", True)
         )
 
+        gemini_model = os.getenv("GEMINI_MODEL") or defaults["gemini_model"]
+        fallback_raw = os.getenv("GEMINI_FALLBACK_MODELS")
+        fallback_models = (
+            _parse_model_chain(fallback_raw)
+            if fallback_raw is not None
+            else list(DEFAULT_GEMINI_FALLBACK_MODELS)
+        )
+        # The preferred model is always tried first; never list it twice.
+        gemini_fallback_models = [m for m in fallback_models if m != gemini_model]
+
         return cls(
             profile=profile,
             red_team_enabled=red_team,
             openai_model=os.getenv("OPENAI_MODEL") or defaults["openai_model"],
             anthropic_model=os.getenv("ANTHROPIC_MODEL") or defaults["anthropic_model"],
-            gemini_model=os.getenv("GEMINI_MODEL") or defaults["gemini_model"],
+            gemini_model=gemini_model,
+            gemini_fallback_models=gemini_fallback_models,
             openai_effort=os.getenv("OPENAI_EFFORT", "high"),
             anthropic_effort=os.getenv("ANTHROPIC_EFFORT", "high"),
             gemini_thinking_level=os.getenv("GEMINI_THINKING_LEVEL", "high"),

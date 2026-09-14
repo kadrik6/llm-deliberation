@@ -7,12 +7,19 @@ from llm_deliberation.types import ModelResponse, RunResult
 
 
 def _section(title: str, response: ModelResponse) -> str:
+    fallback_line = ""
+    if response.fallback_used:
+        fallback_line = (
+            f"_Requested model: `{response.requested_model}` · Fallback reason: "
+            f"{response.fallback_reason} · Attempts (this try): {response.model_attempts}_\n\n"
+        )
     return (
         f"## {title}\n\n"
         f"_Provider: {response.provider} · Model: `{response.model}` · "
         f"Input: {response.usage.input_tokens:,} tokens · "
         f"Output: {response.usage.output_tokens:,} tokens · "
         f"Estimated cost: ${response.estimated_cost_usd:.4f}_\n\n"
+        f"{fallback_line}"
         f"{response.text}\n"
     )
 

@@ -133,3 +133,151 @@ def test_export_of_unfinished_run_returns_conflict(client, service, fake_orchest
 def test_unknown_run_returns_404(client):
     response = client.get("/runs/does-not-exist")
     assert response.status_code == 404
+
+
+# -- Gemini fallback UI: recoverable failure, retry modes, skip --------------
+
+
+def test_failed_red_team_stage_shows_recoverable_actions_and_fallback_provenance(
+    client, service, fake_orchestrator_state
+):
+    from llm_deliberation.providers import ProviderGenerationError
+
+    fake_orchestrator_state["fail_with"] = {
+        "red_team": ProviderGenerationError(
+            "All configured Gemini models failed transiently: gemini-3.8-flash, gemini-3.7-flash.",
+            requested_model="gemini-3.8-flash",
+            attempts=8,
+            attempt_log=[],
+            fallback_used=True,
+            fallback_reason="HTTP 503 from Gemini (model is overloaded)",
+            estimated_cost_usd=0.0,
+        )
+    }
+    response = _submit(client, question="Q?", red_team=True)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    detail = client.get(f"/runs/{run_id}")
+    body = detail.text
+    assert "Retry preferred model" in body
+    assert "Retry with fallback chain" in body
+    assert "Skip red-team and continue" in body
+    assert "gemini-3.8-flash" in body
+    assert "HTTP 503 from Gemini" in body
+    # The only failed stage is red_team, so the generic single-button retry
+    # (used for non-red-team failures) must not appear at all here -- it's
+    # replaced by the three red-team-specific actions.
+    assert "Retry failed stage" not in body
+    # Attempt count must be explicit that it only covers the most recent
+    # try, not a cumulative total across separate user-triggered retries.
+    assert "Attempts (this try): 8" in body
+
+
+def test_successful_fallback_is_disclosed_not_presented_as_an_error(
+    client, service, fake_orchestrator_state
+):
+    fake_orchestrator_state["responses"] = {
+        "red_team": {
+            "provider": "Google",
+            "model": "gemini-3.7-flash",
+            "requested_model": "gemini-3.8-flash",
+            "fallback_used": True,
+            "fallback_reason": "HTTP 503 from Gemini (model is overloaded)",
+            "model_attempts": 5,
+        }
+    }
+    response = _submit(client, question="Q?", red_team=True)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    detail = client.get(f"/runs/{run_id}")
+    body = detail.text
+    assert "Requested" in body
+    assert "gemini-3.8-flash" in body
+    assert "gemini-3.7-flash" in body
+    assert "Fallback reason" in body
+    assert "HTTP 503 from Gemini" in body
+    assert "Attempts (this try): 5" in body
+    # Not rendered as a failure: the run and stage both succeeded.
+    assert "Status: failed" not in body
+
+
+def test_skip_endpoint_lets_the_pipeline_continue(client, service, fake_orchestrator_state):
+    fake_orchestrator_state["fail"] = {"red_team"}
+    response = _submit(client, question="Q?", red_team=True)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+    assert service.get_run(run_id).status == "failed"
+
+    fake_orchestrator_state["log"].clear()
+    skip_response = client.post(f"/runs/{run_id}/stages/red_team/skip")
+    assert skip_response.status_code == 200
+
+    record = service.get_run(run_id)
+    assert record.status == "succeeded"
+    by_name = {s.name: s for s in record.stages}
+    assert by_name["red_team"].status == "skipped"
+    assert "red_team" not in fake_orchestrator_state["log"]
+
+
+def test_retry_preferred_model_mode_is_rejected_for_non_red_team_stage(
+    client, service, fake_orchestrator_state
+):
+    fake_orchestrator_state["fail"] = {"analysis_a"}
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    retry_response = client.post(
+        f"/runs/{run_id}/stages/analysis_a/retry", data={"mode": "preferred_only"}
+    )
+    assert retry_response.status_code == 400
+
+
+def test_running_stage_shows_elapsed_time_derived_from_started_at(client, service):
+    import re
+    from datetime import datetime, timedelta, timezone
+
+    run_id = service.create_run("Q?", "economy", red_team_enabled=False)
+    stage = service.repo.get_stage(run_id, "analysis_a")
+    service.repo.mark_stage_running(stage.id)
+    # Backdate started_at (test-only manipulation) so the elapsed value is
+    # deterministic instead of ~0s, without adding any new persistence.
+    backdated = (datetime.now(timezone.utc) - timedelta(seconds=18)).isoformat()
+    service.repo._conn.execute(
+        "UPDATE stages SET started_at = ? WHERE id = ?", (backdated, stage.id)
+    )
+    service.repo._conn.commit()
+    service.repo.update_run(run_id, status="running", set_started_if_unset=True)
+
+    running_note = re.compile(r"Running · (\d+m )?\d+s")
+
+    detail = client.get(f"/runs/{run_id}")
+    assert detail.status_code == 200
+    assert running_note.search(detail.text)
+
+    # The same data source SSE polls every second.
+    fragment = client.get(f"/runs/{run_id}/status")
+    assert running_note.search(fragment.text)
+
+    # Only the one running stage shows it -- every other (pending) stage row
+    # must not.
+    assert len(running_note.findall(fragment.text)) == 1
+
+
+def test_export_markdown_discloses_fallback(client, service, fake_orchestrator_state):
+    fake_orchestrator_state["responses"] = {
+        "red_team": {
+            "provider": "Google",
+            "model": "gemini-3.7-flash",
+            "requested_model": "gemini-3.8-flash",
+            "fallback_used": True,
+            "fallback_reason": "HTTP 503 from Gemini (model is overloaded)",
+            "model_attempts": 5,
+        }
+    }
+    response = _submit(client, question="Q?", red_team=True)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    export = client.get(f"/runs/{run_id}/export")
+    assert export.status_code == 200
+    assert "Requested model: `gemini-3.8-flash`" in export.text
+    assert "Fallback reason: HTTP 503 from Gemini (model is overloaded)" in export.text
+    assert "Attempts (this try): 5" in export.text

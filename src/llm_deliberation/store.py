@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -28,6 +29,15 @@ class StageRecord:
     started_at: str | None
     completed_at: str | None
     text: str | None = None
+    # Model fallback provenance (see GeminiFallbackProvider). For a stage
+    # that never falls back, requested_model == model and fallback_used is
+    # False. model_attempts counts every attempt across the whole chain
+    # (initial try + retries + fallback switches) for this stage execution.
+    requested_model: str | None = None
+    fallback_used: bool = False
+    fallback_reason: str | None = None
+    model_attempts: int = 1
+    attempt_log: list[dict] | None = None
 
 
 @dataclass(slots=True)
@@ -73,6 +83,11 @@ CREATE TABLE IF NOT EXISTS stages (
     error TEXT,
     started_at TEXT,
     completed_at TEXT,
+    requested_model TEXT,
+    fallback_used INTEGER NOT NULL DEFAULT 0,
+    fallback_reason TEXT,
+    model_attempts INTEGER NOT NULL DEFAULT 1,
+    attempt_log TEXT,
     UNIQUE(run_id, name)
 );
 
@@ -89,6 +104,18 @@ CREATE INDEX IF NOT EXISTS idx_stages_run_id ON stages(run_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_stage_id ON artifacts(stage_id);
 """
 
+# Columns added after the initial schema. CREATE TABLE IF NOT EXISTS above
+# covers brand-new databases; existing ones (e.g. data/deliberation.db from
+# before the Gemini fallback feature) are migrated in-place here so upgrading
+# never requires deleting run history.
+_STAGE_MIGRATION_COLUMNS: dict[str, str] = {
+    "requested_model": "TEXT",
+    "fallback_used": "INTEGER NOT NULL DEFAULT 0",
+    "fallback_reason": "TEXT",
+    "model_attempts": "INTEGER NOT NULL DEFAULT 1",
+    "attempt_log": "TEXT",
+}
+
 
 class Repository:
     """SQLite-backed persistence for runs, stages, and artifacts.
@@ -104,7 +131,14 @@ class Repository:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.executescript(SCHEMA)
+        self._migrate_stage_columns()
         self._conn.commit()
+
+    def _migrate_stage_columns(self) -> None:
+        existing = {row["name"] for row in self._conn.execute("PRAGMA table_info(stages)")}
+        for column, declaration in _STAGE_MIGRATION_COLUMNS.items():
+            if column not in existing:
+                self._conn.execute(f"ALTER TABLE stages ADD COLUMN {column} {declaration}")
 
     def close(self) -> None:
         self._conn.close()
@@ -245,6 +279,7 @@ class Repository:
                 (row["id"],),
             ).fetchone()
             text = art["text_content"] if art else None
+        attempt_log_raw = row["attempt_log"]
         return StageRecord(
             id=row["id"],
             run_id=row["run_id"],
@@ -260,6 +295,11 @@ class Repository:
             started_at=row["started_at"],
             completed_at=row["completed_at"],
             text=text,
+            requested_model=row["requested_model"],
+            fallback_used=bool(row["fallback_used"]),
+            fallback_reason=row["fallback_reason"],
+            model_attempts=row["model_attempts"],
+            attempt_log=json.loads(attempt_log_raw) if attempt_log_raw else None,
         )
 
     def mark_stage_running(self, stage_id: int) -> None:
@@ -280,6 +320,11 @@ class Repository:
         input_tokens: int,
         output_tokens: int,
         estimated_cost_usd: float,
+        requested_model: str | None = None,
+        fallback_used: bool = False,
+        fallback_reason: str | None = None,
+        model_attempts: int = 1,
+        attempt_log: list[dict] | None = None,
     ) -> None:
         now = utc_now_iso()
         row = self._conn.execute(
@@ -291,8 +336,23 @@ class Repository:
         self._conn.execute(
             "UPDATE stages SET status = 'succeeded', provider = ?, model = ?, "
             "input_tokens = ?, output_tokens = ?, estimated_cost_usd = ?, "
+            "requested_model = ?, fallback_used = ?, fallback_reason = ?, "
+            "model_attempts = ?, attempt_log = ?, "
             "error = NULL, completed_at = ? WHERE id = ?",
-            (provider, model, input_tokens, output_tokens, estimated_cost_usd, now, stage_id),
+            (
+                provider,
+                model,
+                input_tokens,
+                output_tokens,
+                estimated_cost_usd,
+                requested_model if requested_model is not None else model,
+                int(fallback_used),
+                fallback_reason,
+                model_attempts,
+                json.dumps(attempt_log) if attempt_log is not None else None,
+                now,
+                stage_id,
+            ),
         )
         self._conn.execute(
             "INSERT INTO artifacts (run_id, stage_id, artifact_type, text_content, created_at) "
@@ -301,10 +361,48 @@ class Repository:
         )
         self._conn.commit()
 
-    def mark_stage_failed(self, stage_id: int, *, error: str) -> None:
+    def mark_stage_failed(
+        self,
+        stage_id: int,
+        *,
+        error: str,
+        requested_model: str | None = None,
+        fallback_used: bool = False,
+        fallback_reason: str | None = None,
+        model_attempts: int = 1,
+        attempt_log: list[dict] | None = None,
+        estimated_cost_usd: float = 0.0,
+    ) -> None:
         self._conn.execute(
-            "UPDATE stages SET status = 'failed', error = ?, completed_at = ? WHERE id = ?",
-            (error, utc_now_iso(), stage_id),
+            "UPDATE stages SET status = 'failed', error = ?, completed_at = ?, "
+            "requested_model = ?, fallback_used = ?, fallback_reason = ?, "
+            "model_attempts = ?, attempt_log = ?, estimated_cost_usd = ? "
+            "WHERE id = ?",
+            (
+                error,
+                utc_now_iso(),
+                requested_model,
+                int(fallback_used),
+                fallback_reason,
+                model_attempts,
+                json.dumps(attempt_log) if attempt_log is not None else None,
+                estimated_cost_usd,
+                stage_id,
+            ),
+        )
+        self._conn.commit()
+
+    def mark_stage_skipped(self, stage_id: int, *, reason: str) -> None:
+        """Mark an optional stage as deliberately skipped by the user.
+
+        Distinct from "failed": a skipped stage does not fail the run, and
+        downstream stages proceed treating it as absent (the same way a
+        disabled red-team stage is treated).
+        """
+        self._conn.execute(
+            "UPDATE stages SET status = 'skipped', error = NULL, "
+            "fallback_reason = ?, completed_at = ? WHERE id = ?",
+            (reason, utc_now_iso(), stage_id),
         )
         self._conn.commit()
 

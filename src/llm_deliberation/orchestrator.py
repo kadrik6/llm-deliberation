@@ -6,7 +6,7 @@ from llm_deliberation import prompts
 from llm_deliberation.config import Settings
 from llm_deliberation.providers import (
     AnthropicProvider,
-    GeminiProvider,
+    GeminiFallbackProvider,
     OpenAIProvider,
     Provider,
 )
@@ -39,13 +39,14 @@ ALL_STAGE_NAMES: tuple[str, ...] = tuple(
 )
 
 
-async def _call(provider: Provider, *, system: str, prompt: str) -> ModelResponse:
+async def _call(provider: Provider, *, system: str, prompt: str, **kwargs: object) -> ModelResponse:
     # Provider SDK calls are synchronous. to_thread lets independent calls run
     # concurrently without coupling the project to provider-specific async APIs.
     return await asyncio.to_thread(
         provider.generate,
         system=system,
         prompt=prompt,
+        **kwargs,
     )
 
 
@@ -94,15 +95,24 @@ class DeliberationOrchestrator:
             max_output_tokens=settings.max_output_tokens,
             effort=settings.anthropic_effort,
         )
-        self.red = GeminiProvider(
-            model=settings.gemini_model,
+        self.red = GeminiFallbackProvider(
+            models=[settings.gemini_model, *settings.gemini_fallback_models],
             max_output_tokens=settings.max_output_tokens,
             thinking_level=settings.gemini_thinking_level,
         )
 
     async def run_stage(
-        self, stage: str, question: str, texts: dict[str, str]
+        self,
+        stage: str,
+        question: str,
+        texts: dict[str, str],
+        *,
+        gemini_mode: str = "chain",
     ) -> ModelResponse:
         provider = getattr(self, STAGE_PROVIDER[stage])
         prompt = _build_prompt(stage, question, texts)
-        return await _call(provider, system=prompts.BASE_SYSTEM, prompt=prompt)
+        # gemini_mode only means anything to GeminiFallbackProvider (used by
+        # the red_team stage's "Retry preferred model" vs "Retry with
+        # fallback chain" UI actions); every other provider ignores it.
+        kwargs = {"mode": gemini_mode} if stage == "red_team" else {}
+        return await _call(provider, system=prompts.BASE_SYSTEM, prompt=prompt, **kwargs)

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from llm_deliberation.config import PROFILES, Settings, default_red_team_enabled
 from llm_deliberation.orchestrator import ALL_STAGE_NAMES, WAVES, DeliberationOrchestrator
+from llm_deliberation.providers import ProviderGenerationError
 from llm_deliberation.store import DEFAULT_DB_PATH, Repository, RunRecord, utc_now_iso
 from llm_deliberation.types import ModelResponse, RunResult, Usage
 
@@ -96,6 +97,11 @@ class DeliberationService:
                     input_tokens=stage.input_tokens, output_tokens=stage.output_tokens
                 ),
                 estimated_cost_usd=stage.estimated_cost_usd,
+                requested_model=stage.requested_model,
+                fallback_used=stage.fallback_used,
+                fallback_reason=stage.fallback_reason,
+                model_attempts=stage.model_attempts,
+                attempt_log=stage.attempt_log,
             )
 
         red_stage = stages.get("red_team")
@@ -139,17 +145,47 @@ class DeliberationService:
         self.repo.update_run(run_id, status="running", set_started_if_unset=True)
         return await self._execute(run_id)
 
-    async def retry_stage(self, run_id: str, stage_id: int | str) -> RunRecord:
+    async def retry_stage(
+        self, run_id: str, stage_id: int | str, *, gemini_mode: str = "chain"
+    ) -> RunRecord:
         stage = self.repo.get_stage(run_id, stage_id)
         if stage.status == "succeeded":
             raise ValueError(
                 f"Stage '{stage.name}' on run {run_id} already succeeded; nothing to retry."
             )
+        if gemini_mode != "chain" and stage.name != "red_team":
+            raise ValueError(
+                f"gemini_mode={gemini_mode!r} only applies to the red_team stage, "
+                f"not '{stage.name}'."
+            )
         self.repo.reset_stage(stage.id)
+        self.repo.update_run(run_id, status="running", set_started_if_unset=True)
+        return await self._execute(run_id, gemini_mode=gemini_mode)
+
+    async def skip_stage(self, run_id: str, stage_id: int | str) -> RunRecord:
+        """Skip the optional red-team stage and let the rest of the run continue.
+
+        Only ever applies to red_team: it is the only stage the pipeline
+        treats as optional (it can already be entirely disabled up front).
+        Skipping after a failure reuses that same "absent, not an error"
+        handling -- revision/synthesis proceed without a red-team report,
+        exactly as when red-team was disabled from the start.
+        """
+        stage = self.repo.get_stage(run_id, stage_id)
+        if stage.name != "red_team":
+            raise ValueError("Only the optional red_team stage can be skipped.")
+        if stage.status == "succeeded":
+            raise ValueError(
+                f"Stage '{stage.name}' on run {run_id} already succeeded; nothing to skip."
+            )
+        self.repo.mark_stage_skipped(
+            stage.id,
+            reason="Skipped by user after the Gemini red-team stage could not complete.",
+        )
         self.repo.update_run(run_id, status="running", set_started_if_unset=True)
         return await self._execute(run_id)
 
-    async def _execute(self, run_id: str) -> RunRecord:
+    async def _execute(self, run_id: str, *, gemini_mode: str = "chain") -> RunRecord:
         run = self.repo.get_run(run_id)
         try:
             settings = Settings.load(
@@ -187,6 +223,11 @@ class DeliberationService:
                 stage = stages_by_name[name]
                 if stage.status == "succeeded" and stage.text is not None:
                     texts[name] = stage.text
+                elif stage.status == "skipped":
+                    # Resolved as deliberately absent, not pending and not a
+                    # failure -- downstream prompts already tolerate a
+                    # missing red-team report (texts.get("red_team")).
+                    continue
                 else:
                     pending_names.append(name)
 
@@ -200,7 +241,9 @@ class DeliberationService:
 
             results = await asyncio.gather(
                 *(
-                    orchestrator.run_stage(name, effective_question, texts)
+                    orchestrator.run_stage(
+                        name, effective_question, texts, gemini_mode=gemini_mode
+                    )
                     for name in pending_names
                 ),
                 return_exceptions=True,
@@ -209,7 +252,19 @@ class DeliberationService:
             for name, outcome in zip(pending_names, results):
                 stage = stages_by_name[name]
                 if isinstance(outcome, BaseException):
-                    self.repo.mark_stage_failed(stage.id, error=str(outcome))
+                    if isinstance(outcome, ProviderGenerationError):
+                        self.repo.mark_stage_failed(
+                            stage.id,
+                            error=str(outcome),
+                            requested_model=outcome.requested_model,
+                            fallback_used=outcome.fallback_used,
+                            fallback_reason=outcome.fallback_reason,
+                            model_attempts=outcome.attempts,
+                            attempt_log=outcome.attempt_log,
+                            estimated_cost_usd=outcome.estimated_cost_usd,
+                        )
+                    else:
+                        self.repo.mark_stage_failed(stage.id, error=str(outcome))
                     run_failed = True
                 else:
                     self.repo.mark_stage_succeeded(
@@ -220,6 +275,11 @@ class DeliberationService:
                         input_tokens=outcome.usage.input_tokens,
                         output_tokens=outcome.usage.output_tokens,
                         estimated_cost_usd=outcome.estimated_cost_usd,
+                        requested_model=outcome.requested_model,
+                        fallback_used=outcome.fallback_used,
+                        fallback_reason=outcome.fallback_reason,
+                        model_attempts=outcome.model_attempts,
+                        attempt_log=outcome.attempt_log,
                     )
                     texts[name] = outcome.text
 

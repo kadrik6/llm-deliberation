@@ -12,23 +12,50 @@ class FakeOrchestrator:
     can control which stages fail and inspect the call log across the
     multiple service._execute() invocations a test may trigger (initial run,
     resume, retry).
+
+    state["fail"]: set[str] of stage names that raise a plain RuntimeError.
+    state["fail_with"]: dict[str, Exception] of stage names that raise a
+        specific exception instance instead (e.g. ProviderGenerationError,
+        to simulate the Gemini fallback chain exhausting itself).
+    state["responses"]: dict[str, dict] of per-stage ModelResponse field
+        overrides (e.g. to simulate a successful fallback), keyed by stage
+        name.
+    state["gemini_modes"]: list[(stage, gemini_mode)] observed, so tests can
+        assert which retry mode the service actually requested.
     """
 
     def __init__(self, settings, *, state: dict):
         self.settings = settings
         self._state = state
 
-    async def run_stage(self, stage: str, question: str, texts: dict[str, str]) -> ModelResponse:
+    async def run_stage(
+        self,
+        stage: str,
+        question: str,
+        texts: dict[str, str],
+        *,
+        gemini_mode: str = "chain",
+    ) -> ModelResponse:
         self._state["log"].append(stage)
+        self._state.setdefault("gemini_modes", []).append((stage, gemini_mode))
+
+        fail_with = self._state.get("fail_with", {})
+        if stage in fail_with:
+            raise fail_with[stage]
         if stage in self._state["fail"]:
             raise RuntimeError(f"simulated failure in stage '{stage}'")
-        return ModelResponse(
+
+        overrides = self._state.get("responses", {}).get(stage, {})
+        defaults = dict(
             provider="Fake",
             model="fake-model",
             text=f"{stage}-output",
             usage=Usage(input_tokens=10, output_tokens=20),
             estimated_cost_usd=0.001,
+            requested_model="fake-model",
         )
+        defaults.update(overrides)
+        return ModelResponse(**defaults)
 
 
 @pytest.fixture

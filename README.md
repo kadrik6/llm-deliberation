@@ -254,6 +254,40 @@ vote between the two of them would never catch. See
 including why this is unproven and off by default is a reasonable
 starting choice for some workflows.
 
+### Gemini model fallback
+
+The newest configured Gemini model is always tried first
+(`GEMINI_MODEL`). If it returns a transient, provider-side failure --
+HTTP 500/502/503/504 or a clearly-labeled high-demand response -- after
+exhausting a small bounded retry budget (a few attempts with exponential
+backoff and jitter, a matter of seconds, not an infinite loop), the app
+automatically moves on to the next model in `GEMINI_FALLBACK_MODELS`
+(comma-separated, oldest/cheapest last; see `.env.example`).
+
+This is deliberately narrow:
+
+- **Never** triggered by an invalid API key, billing issue, invalid
+  request, unsupported parameter, or other deterministic client-side
+  error -- those fail immediately, unmodified, so a real configuration
+  problem is never hidden behind a silent retry.
+- **Fallback does not imply the models are equivalent.** A different
+  Gemini version can reason differently about the same prompt. Every run
+  discloses, for the red-team stage, which model was *requested* vs.
+  which one *actually* produced the output, why a fallback happened (if
+  it did), and how many attempts it took -- in the running/result UI, the
+  run detail page, and the Markdown export. If every configured model
+  fails, the stage is left in a recoverable state with three explicit
+  choices (retry the preferred model, retry the whole fallback chain, or
+  skip red-team and let revision/synthesis continue without it) --
+  nothing is skipped automatically.
+- Token usage and estimated cost are always attributed to the model that
+  actually ran, and a failed attempt's cost (on the rare occasion a
+  failed call still reports usage) is never dropped from the run total.
+
+See [ADR 005](docs/decisions/005-gemini-model-fallback.md) for the full
+reasoning and [`docs/architecture.md`](docs/architecture.md) for where
+this lives in the provider layer.
+
 ## Cost & token tracking
 
 Every stage's input/output token counts and an estimated USD cost

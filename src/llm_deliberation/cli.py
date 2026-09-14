@@ -131,11 +131,16 @@ async def _run(args: argparse.Namespace) -> int:
     )
     settings.validate_keys()
 
+    if settings.red_team_enabled:
+        chain = ", ".join([settings.gemini_model, *settings.gemini_fallback_models])
+        red_team_status = f"on (preferred: {settings.gemini_model}; chain: {chain})"
+    else:
+        red_team_status = "off"
     print(
         f"Profile={settings.profile} | "
         f"A={settings.openai_model} | "
         f"B={settings.anthropic_model} | "
-        f"red-team={'on (' + settings.gemini_model + ')' if settings.red_team_enabled else 'off'}"
+        f"red-team={red_team_status}"
     )
 
     run_id = service.create_run(

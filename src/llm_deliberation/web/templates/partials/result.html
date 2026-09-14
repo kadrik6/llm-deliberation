@@ -25,6 +25,14 @@
         {{ artifact.usage.input_tokens }} in / {{ artifact.usage.output_tokens }} out &middot;
         ${{ "%.4f"|format(artifact.estimated_cost_usd) }}
       </p>
+      {% if artifact.fallback_used %}
+      <p class="artifact-fallback-note">
+        Requested: <code>{{ artifact.requested_model }}</code> &middot;
+        Used: <code>{{ artifact.model }}</code> &middot;
+        Fallback reason: {{ artifact.fallback_reason }} &middot;
+        Attempts (this try): {{ artifact.model_attempts }}
+      </p>
+      {% endif %}
     </details>
     {% endif %}
   {% endfor %}

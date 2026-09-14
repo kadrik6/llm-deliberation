@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from llm_deliberation.store import RunRecord
+from llm_deliberation.store import RunRecord, StageRecord
 
 STATUS_SYMBOLS: dict[str, str] = {
     "pending": "○",  # ○
     "running": "●",  # ●
     "succeeded": "✓",  # ✓
     "failed": "✗",  # ✗
+    "skipped": "⏭",  # ⏭ -- deliberately skipped by the user, not a failure
 }
 
 # (stage_name, display_label) grouped for the pipeline view.
@@ -47,16 +48,27 @@ PROFILE_BLURBS: dict[str, str] = {
 }
 
 
-def elapsed_seconds(record: RunRecord) -> float | None:
-    if not record.started_at:
+def _elapsed_since(started_at: str | None, completed_at: str | None) -> float | None:
+    if not started_at:
         return None
-    start = datetime.fromisoformat(record.started_at)
-    end = (
-        datetime.fromisoformat(record.completed_at)
-        if record.completed_at
-        else datetime.now(timezone.utc)
-    )
+    start = datetime.fromisoformat(started_at)
+    end = datetime.fromisoformat(completed_at) if completed_at else datetime.now(timezone.utc)
     return max(0.0, (end - start).total_seconds())
+
+
+def elapsed_seconds(record: RunRecord) -> float | None:
+    return _elapsed_since(record.started_at, record.completed_at)
+
+
+def stage_elapsed_seconds(stage: StageRecord) -> float | None:
+    """How long a stage has been running, using only its stored started_at.
+
+    Only meaningful while status == "running" (completed_at is still unset
+    then, so this measures "so far", not a finished duration). Generic
+    across every stage -- it says nothing about internal provider retries,
+    just wall-clock time since the stage started.
+    """
+    return _elapsed_since(stage.started_at, stage.completed_at)
 
 
 def format_duration(seconds: float | None) -> str:
@@ -90,6 +102,12 @@ def build_pipeline(record: RunRecord) -> list[dict]:
             if stage is None:
                 rows.append({"name": name, "label": label, "disabled": True})
                 continue
+            running_note = None
+            if stage.status == "running":
+                # Wall-clock time only -- this deliberately does not claim to
+                # know which internal provider attempt/model is in flight.
+                running_note = f"Running · {format_duration(stage_elapsed_seconds(stage))}"
+
             rows.append(
                 {
                     "name": name,
@@ -99,6 +117,16 @@ def build_pipeline(record: RunRecord) -> list[dict]:
                     "symbol": STATUS_SYMBOLS.get(stage.status, "?"),
                     "error": stage.error,
                     "attempt": stage.attempt,
+                    "model": stage.model,
+                    "requested_model": stage.requested_model,
+                    "fallback_used": stage.fallback_used,
+                    "fallback_reason": stage.fallback_reason,
+                    "model_attempts": stage.model_attempts,
+                    "running_note": running_note,
+                    # Only the optional red-team stage offers "retry
+                    # preferred model" / "retry fallback chain" / "skip" --
+                    # every other stage keeps the single generic retry.
+                    "skippable": name == "red_team" and stage.status == "failed",
                 }
             )
         groups.append({"title": title, "rows": rows})

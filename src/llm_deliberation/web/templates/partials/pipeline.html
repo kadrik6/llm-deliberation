@@ -8,11 +8,40 @@
         <span class="stage-label">{{ row.label }}</span>
         {% if row.disabled %}
           <span class="stage-note">disabled</span>
+        {% elif row.status == 'running' %}
+          <span class="stage-note">{{ row.running_note }}</span>
+        {% elif row.status == 'skipped' %}
+          <span class="stage-note">skipped{{ (" — " + row.fallback_reason) if row.fallback_reason else "" }}</span>
+        {% elif row.status == 'succeeded' and row.fallback_used %}
+          <span class="stage-fallback-note">
+            Requested: <code>{{ row.requested_model }}</code> · Used: <code>{{ row.model }}</code>
+            · Fallback reason: {{ row.fallback_reason }}
+          </span>
         {% elif row.status == 'failed' %}
           <span class="stage-error">{{ row.error }}</span>
-          <form method="post" action="/runs/{{ run_id }}/stages/{{ row.name }}/retry" class="inline-form">
-            <button type="submit">Retry failed stage</button>
-          </form>
+          {% if row.requested_model %}
+            <span class="stage-fallback-note">
+              Requested: <code>{{ row.requested_model }}</code> · Attempts (this try): {{ row.model_attempts }}
+              {%- if row.fallback_reason %} · Reason: {{ row.fallback_reason }}{% endif %}
+            </span>
+          {% endif %}
+          {% if row.skippable %}
+            <form method="post" action="/runs/{{ run_id }}/stages/{{ row.name }}/retry" class="inline-form">
+              <input type="hidden" name="mode" value="preferred_only">
+              <button type="submit">Retry preferred model</button>
+            </form>
+            <form method="post" action="/runs/{{ run_id }}/stages/{{ row.name }}/retry" class="inline-form">
+              <input type="hidden" name="mode" value="chain">
+              <button type="submit">Retry with fallback chain</button>
+            </form>
+            <form method="post" action="/runs/{{ run_id }}/stages/{{ row.name }}/skip" class="inline-form">
+              <button type="submit">Skip red-team and continue</button>
+            </form>
+          {% else %}
+            <form method="post" action="/runs/{{ run_id }}/stages/{{ row.name }}/retry" class="inline-form">
+              <button type="submit">Retry failed stage</button>
+            </form>
+          {% endif %}
         {% endif %}
       </div>
     {% endfor %}
