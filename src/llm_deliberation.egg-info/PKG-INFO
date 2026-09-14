@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: llm-deliberation
+Version: 0.1.0
+Summary: Multi-model deliberation CLI: independent analysis, cross-critique, optional red-team, revision, synthesis.
+Requires-Python: >=3.11
+Requires-Dist: openai>=1.0.0
+Requires-Dist: anthropic>=1.0.0
+Requires-Dist: google-genai>=2.3.0
+Requires-Dist: python-dotenv>=1.0.0

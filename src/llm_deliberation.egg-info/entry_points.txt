@@ -1,0 +1,2 @@
+[console_scripts]
+llm-deliberate = llm_deliberation.cli:main

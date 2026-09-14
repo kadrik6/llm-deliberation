@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-deliberation"
+version = "0.1.0"
+description = "Multi-model deliberation CLI: independent analysis, cross-critique, optional red-team, revision, synthesis."
+requires-python = ">=3.11"
+dependencies = [
+  "openai>=1.0.0",
+  "anthropic>=1.0.0",
+  "google-genai>=2.3.0",
+  "python-dotenv>=1.0.0",
+]
+
+[project.scripts]
+llm-deliberate = "llm_deliberation.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
