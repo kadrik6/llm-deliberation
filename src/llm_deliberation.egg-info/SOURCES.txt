@@ -8,6 +8,8 @@ src/llm_deliberation/pricing.py
 src/llm_deliberation/prompts.py
 src/llm_deliberation/providers.py
 src/llm_deliberation/report.py
+src/llm_deliberation/service.py
+src/llm_deliberation/store.py
 src/llm_deliberation/types.py
 src/llm_deliberation.egg-info/PKG-INFO
 src/llm_deliberation.egg-info/SOURCES.txt
@@ -15,3 +17,5 @@ src/llm_deliberation.egg-info/dependency_links.txt
 src/llm_deliberation.egg-info/entry_points.txt
 src/llm_deliberation.egg-info/requires.txt
 src/llm_deliberation.egg-info/top_level.txt
+tests/test_service.py
+tests/test_store.py

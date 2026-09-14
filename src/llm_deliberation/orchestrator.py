@@ -10,7 +10,33 @@ from llm_deliberation.providers import (
     OpenAIProvider,
     Provider,
 )
-from llm_deliberation.types import ModelResponse, RunResult
+from llm_deliberation.types import ModelResponse
+
+# Stages grouped into waves that can run concurrently. A stage only depends
+# on stages from earlier waves, never on siblings in its own wave.
+WAVES: tuple[tuple[str, ...], ...] = (
+    ("analysis_a", "analysis_b"),
+    ("critique_a_of_b", "critique_b_of_a", "red_team"),
+    ("revision_a", "revision_b"),
+    ("synthesis",),
+)
+
+# Which provider attribute (see DeliberationOrchestrator.__init__) handles
+# each stage.
+STAGE_PROVIDER: dict[str, str] = {
+    "analysis_a": "a",
+    "analysis_b": "b",
+    "critique_a_of_b": "a",
+    "critique_b_of_a": "b",
+    "red_team": "red",
+    "revision_a": "a",
+    "revision_b": "b",
+    "synthesis": "a",
+}
+
+ALL_STAGE_NAMES: tuple[str, ...] = tuple(
+    name for wave in WAVES for name in wave
+)
 
 
 async def _call(provider: Provider, *, system: str, prompt: str) -> ModelResponse:
@@ -23,7 +49,38 @@ async def _call(provider: Provider, *, system: str, prompt: str) -> ModelRespons
     )
 
 
+def _build_prompt(stage: str, question: str, texts: dict[str, str]) -> str:
+    if stage == "analysis_a" or stage == "analysis_b":
+        return prompts.independent_analysis(question)
+    if stage == "critique_a_of_b":
+        return prompts.critique(question, texts["analysis_b"])
+    if stage == "critique_b_of_a":
+        return prompts.critique(question, texts["analysis_a"])
+    if stage == "red_team":
+        return prompts.red_team(question, texts["analysis_a"], texts["analysis_b"])
+    if stage == "revision_a":
+        return prompts.revision(
+            question, texts["analysis_a"], texts["critique_b_of_a"], texts.get("red_team")
+        )
+    if stage == "revision_b":
+        return prompts.revision(
+            question, texts["analysis_b"], texts["critique_a_of_b"], texts.get("red_team")
+        )
+    if stage == "synthesis":
+        return prompts.synthesis(
+            question, texts["revision_a"], texts["revision_b"], texts.get("red_team")
+        )
+    raise ValueError(f"Unknown stage: {stage}")
+
+
 class DeliberationOrchestrator:
+    """Owns provider instances and knows how to execute a single stage.
+
+    Multi-stage sequencing, persistence, and resumability live in
+    DeliberationService; this class only knows how to run one named stage
+    given the question and the text produced by prior stages.
+    """
+
     def __init__(self, settings: Settings):
         self.settings = settings
 
@@ -43,102 +100,9 @@ class DeliberationOrchestrator:
             thinking_level=settings.gemini_thinking_level,
         )
 
-    async def run(self, question: str) -> RunResult:
-        system = prompts.BASE_SYSTEM
-
-        # Stage 1: true independent generation.
-        analysis_a, analysis_b = await asyncio.gather(
-            _call(
-                self.a,
-                system=system,
-                prompt=prompts.independent_analysis(question),
-            ),
-            _call(
-                self.b,
-                system=system,
-                prompt=prompts.independent_analysis(question),
-            ),
-        )
-
-        # Stage 2: cross-review and optional third-model red-team.
-        jobs = [
-            _call(
-                self.a,
-                system=system,
-                prompt=prompts.critique(question, analysis_b.text),
-            ),
-            _call(
-                self.b,
-                system=system,
-                prompt=prompts.critique(question, analysis_a.text),
-            ),
-        ]
-        if self.settings.red_team_enabled:
-            jobs.append(
-                _call(
-                    self.red,
-                    system=system,
-                    prompt=prompts.red_team(
-                        question,
-                        analysis_a.text,
-                        analysis_b.text,
-                    ),
-                )
-            )
-
-        stage2 = await asyncio.gather(*jobs)
-        critique_a_of_b = stage2[0]
-        critique_b_of_a = stage2[1]
-        red_team = stage2[2] if self.settings.red_team_enabled else None
-        red_text = red_team.text if red_team else None
-
-        # Stage 3: each candidate revises its own answer using peer feedback
-        # and the shared-blind-spot report.
-        revision_a, revision_b = await asyncio.gather(
-            _call(
-                self.a,
-                system=system,
-                prompt=prompts.revision(
-                    question,
-                    analysis_a.text,
-                    critique_b_of_a.text,
-                    red_text,
-                ),
-            ),
-            _call(
-                self.b,
-                system=system,
-                prompt=prompts.revision(
-                    question,
-                    analysis_b.text,
-                    critique_a_of_b.text,
-                    red_text,
-                ),
-            ),
-        )
-
-        # Stage 4: final synthesis. Candidate names are intentionally generic.
-        synthesis = await _call(
-            self.a,
-            system=system,
-            prompt=prompts.synthesis(
-                question,
-                revision_a.text,
-                revision_b.text,
-                red_text,
-            ),
-        )
-
-        return RunResult(
-            question=question,
-            profile=self.settings.profile,
-            red_team_enabled=self.settings.red_team_enabled,
-            analysis_a=analysis_a,
-            analysis_b=analysis_b,
-            critique_a_of_b=critique_a_of_b,
-            critique_b_of_a=critique_b_of_a,
-            red_team=red_team,
-            revision_a=revision_a,
-            revision_b=revision_b,
-            synthesis=synthesis,
-        )
+    async def run_stage(
+        self, stage: str, question: str, texts: dict[str, str]
+    ) -> ModelResponse:
+        provider = getattr(self, STAGE_PROVIDER[stage])
+        prompt = _build_prompt(stage, question, texts)
+        return await _call(provider, system=prompts.BASE_SYSTEM, prompt=prompt)

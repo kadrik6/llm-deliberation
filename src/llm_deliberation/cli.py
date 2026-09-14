@@ -5,8 +5,9 @@ import asyncio
 import sys
 
 from llm_deliberation.config import PROFILES, Settings
-from llm_deliberation.orchestrator import DeliberationOrchestrator
 from llm_deliberation.report import save_report
+from llm_deliberation.service import DeliberationService
+from llm_deliberation.store import RunRecord
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -41,14 +42,78 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.set_defaults(red_team=None)
     parser.add_argument(
+        "--context",
+        help="Optional additional context appended to the question.",
+    )
+    parser.add_argument(
         "-o",
         "--output",
         help="Markdown report path. Default: runs/deliberation-<timestamp>.md",
     )
+    parser.add_argument(
+        "--resume",
+        metavar="RUN_ID",
+        help="Resume an existing run instead of creating a new one.",
+    )
+    parser.add_argument(
+        "--retry-stage",
+        nargs=2,
+        metavar=("RUN_ID", "STAGE_NAME"),
+        help="Retry one failed stage of an existing run, then continue.",
+    )
+    parser.add_argument(
+        "--list-runs",
+        action="store_true",
+        help="List recent runs and exit.",
+    )
     return parser
 
 
+def _print_run_outcome(service: DeliberationService, record: RunRecord, output: str | None) -> int:
+    if record.status != "succeeded":
+        print("\nDeliberation did not complete.", file=sys.stderr)
+        for stage in record.stages:
+            if stage.status == "failed":
+                print(f"  [{stage.name}] {stage.error}", file=sys.stderr)
+        print(
+            f"\nRun ID: {record.id}\n"
+            f"Estimated cost so far: ${record.estimated_total_cost_usd:.4f}\n"
+            f"Retry with: llm-deliberate --resume {record.id}",
+            file=sys.stderr,
+        )
+        return 1
+
+    result = service.to_run_result(record.id)
+    path = save_report(result, output)
+
+    print("\n=== FINAL SYNTHESIS ===\n")
+    print(result.synthesis.text)
+    print(f"\nEstimated total API cost: ${result.estimated_total_cost_usd:.4f}")
+    print(f"Full report: {path}")
+    print(f"Run ID: {record.id}")
+    return 0
+
+
 async def _run(args: argparse.Namespace) -> int:
+    service = DeliberationService()
+
+    if args.list_runs:
+        for run in service.list_runs():
+            print(
+                f"{run.id}  {run.status:<10} {run.profile:<10} "
+                f"${run.estimated_total_cost_usd:.4f}  {run.question[:60]}"
+            )
+        return 0
+
+    if args.retry_stage:
+        run_id, stage_name = args.retry_stage
+        record = await service.retry_stage(run_id, stage_name)
+        return _print_run_outcome(service, record, args.output)
+
+    if args.resume:
+        record = await service.resume_run(args.resume)
+        return _print_run_outcome(service, record, args.output)
+
     question = args.question
     if not question:
         if sys.stdin.isatty():
@@ -72,20 +137,18 @@ async def _run(args: argparse.Namespace) -> int:
         f"B={settings.anthropic_model} | "
         f"red-team={'on (' + settings.gemini_model + ')' if settings.red_team_enabled else 'off'}"
     )
+
+    run_id = service.create_run(
+        question=question,
+        profile=settings.profile,
+        red_team_enabled=settings.red_team_enabled,
+        context=args.context,
+    )
+    print(f"Run ID: {run_id}")
     print("Running deliberation...")
 
-    orchestrator = DeliberationOrchestrator(settings)
-    result = await orchestrator.run(question)
-    path = save_report(result, args.output)
-
-    print("\n=== FINAL SYNTHESIS ===\n")
-    print(result.synthesis.text)
-    print(
-        f"\nEstimated total API cost: "
-        f"${result.estimated_total_cost_usd:.4f}"
-    )
-    print(f"Full report: {path}")
-    return 0
+    record = await service.start_run(run_id)
+    return _print_run_outcome(service, record, args.output)
 
 
 def main() -> None:

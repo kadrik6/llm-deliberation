@@ -35,6 +35,17 @@ def _bool_env(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def default_red_team_enabled() -> bool:
+    """Red-team default when a caller doesn't specify one explicitly."""
+    load_dotenv()
+    return _bool_env("RED_TEAM_ENABLED", True)
+
+
+def default_profile() -> str:
+    load_dotenv()
+    return os.getenv("LLM_PROFILE", "balanced")
+
+
 @dataclass(slots=True)
 class Settings:
     profile: str

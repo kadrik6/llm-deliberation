@@ -37,6 +37,7 @@ class RunResult:
     revision_a: ModelResponse
     revision_b: ModelResponse
     synthesis: ModelResponse
+    context: str | None = None
 
     @property
     def all_responses(self) -> list[ModelResponse]:

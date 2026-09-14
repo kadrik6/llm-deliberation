@@ -29,11 +29,15 @@ def render_markdown(result: RunResult) -> str:
         "",
         result.question,
         "",
+    ]
+    if result.context:
+        parts.extend(["## Context", "", result.context, ""])
+    parts.extend([
         _section("Independent analysis A", result.analysis_a),
         _section("Independent analysis B", result.analysis_b),
         _section("A critiques B", result.critique_a_of_b),
         _section("B critiques A", result.critique_b_of_a),
-    ]
+    ])
 
     if result.red_team:
         parts.append(_section("Independent red-team", result.red_team))
