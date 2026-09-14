@@ -125,6 +125,22 @@ view mid-run, and the final-answer page with expandable artifacts._
 <!-- docs/images/pipeline.png -->
 <!-- docs/images/result.png -->
 
+## Demo
+
+**There is currently no public hosted demo of this project.** Nothing is
+deployed anywhere. The only way to see the web UI today is to run it
+yourself on your own machine -- see [Quick start](#quick-start) below.
+
+`http://127.0.0.1:8765`, mentioned under Quick start, is **not** a link
+to a hosted site. It is the local address the web UI binds to on your own
+machine, and it only resolves to anything while you have
+`llm-deliberate-ui` running yourself. See
+[Privacy & security limitations](#privacy--security-limitations).
+
+<!-- Planned, not built yet (see Roadmap): a read-only public demo mode
+     that replays a handful of stored example runs from this repo --
+     no API keys, no live model calls, no way to submit a new question. -->
+
 ## Quick start
 
 Requires Python 3.11+ and API keys for OpenAI and Anthropic (Gemini only
@@ -155,11 +171,14 @@ llm-deliberate --profile economy --no-red-team \
 
 ```bash
 llm-deliberate-ui
-# open http://127.0.0.1:8765
+# then open http://127.0.0.1:8765 in your browser
 ```
 
-The web UI binds to `127.0.0.1` only and has no authentication -- it is
-built for single-user local use. See
+`http://127.0.0.1:8765` is a **local address, not a hosted URL** -- it
+only exists while the command above is running on your own machine. There
+is no public/hosted version of this UI to visit instead (see
+[Demo](#demo)). The web UI binds to `127.0.0.1` only and has no
+authentication -- it is built for single-user local use. See
 [`docs/trust-model.md`](docs/trust-model.md).
 
 ## Profiles
@@ -255,6 +274,10 @@ including live smoke tests against real OpenAI/Anthropic calls), but:
 - Structured/JSON stage outputs for machine-checkable claims.
 - Citation/evidence retrieval before synthesis.
 - Configurable retention policy for stored runs.
+- Read-only public demo mode: a hosted deployment that only replays a
+  handful of stored example runs from this repo -- no API keys, no live
+  model calls, no form to submit a new question. Not started; see
+  [Demo](#demo).
 
 ## Evaluation plan
 
