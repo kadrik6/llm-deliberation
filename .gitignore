@@ -1,9 +1,25 @@
+# Python
 .venv/
+venv/
 __pycache__/
 *.pyc
-.env
-runs/
-.DS_Store
-data/
 *.egg-info/
+build/
+dist/
 .pytest_cache/
+
+# Secrets
+.env
+.env.local
+
+# Local application data (SQLite runs database, Markdown exports)
+data/
+*.db
+*.db-journal
+*.sqlite3
+runs/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

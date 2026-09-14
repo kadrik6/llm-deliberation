@@ -1,148 +1,281 @@
-# llm-deliberation
+# LLM Deliberation
 
-A small local Python orchestrator for **multi-model deliberation**.
+> LLM Deliberation is a local-first experimental decision-support tool
+> exploring whether structured disagreement between different LLM families
+> can produce more robust and auditable answers than a single-model
+> interaction.
 
-It does not run the frontier models locally. The CLI runs on your computer and
-calls cloud APIs. The goal is to reduce anchoring and correlated mistakes by
-giving different model families distinct roles.
+That sentence is a hypothesis, not a claim of proven results. Please read
+the caveats below before the feature list.
 
-## Workflow
+## What this is not, and what is not (yet) shown
 
-```text
+- **This project does not claim that using multiple models is
+  automatically more accurate, better calibrated, or more trustworthy
+  than a single strong model.** It might help for some kinds of questions
+  and not others, or not at all. That is genuinely unknown.
+- **The central hypothesis above has not been empirically evaluated.**
+  There is no benchmark, no scored comparison against a single-model
+  baseline, and no published result in this repository claiming the
+  pipeline "works better." [`docs/why-deliberation.md`](docs/why-deliberation.md)
+  explains the reasoning behind the design and is explicit about what
+  that reasoning does not establish; [`evals/README.md`](evals/README.md)
+  describes the comparison this project intends to run, but has not run
+  yet.
+- **This is local software, not a local/offline LLM.** The CLI and the
+  web UI run entirely on your machine, but every deliberation stage is a
+  network request to a third-party provider's API (OpenAI, Anthropic,
+  and optionally Google/Gemini). Your questions and generated text leave
+  your machine. See [`docs/trust-model.md`](docs/trust-model.md).
+
+If you're evaluating this repository as a portfolio project: the
+interesting part is not "does this produce better answers" (unverified),
+it's the architecture built to make that question answerable later --
+durable, resumable, fully-inspectable runs instead of a black-box chat
+response. See [Project status](#project-status) and
+[Roadmap](#roadmap).
+
+## Why this design
+
+- **Why a single LLM response can be insufficient for a hard decision:**
+  one pass of reasoning from one model, shaped by one training set and one
+  set of unstated assumptions, has no built-in mechanism to notice its own
+  blind spots or flag which of its confident claims are actually
+  load-bearing.
+- **Why independent generation before cross-exposure:** if one model saw
+  the other's answer first, it would anchor toward it, collapsing the
+  diversity of perspective the whole pipeline depends on. Independence is
+  a prerequisite for the next stage to mean anything.
+  ([ADR 001](docs/decisions/001-independent-generation.md))
+- **Why cross-critique:** a different model family is more likely to
+  notice a framing choice, omission, or unsupported claim than the model
+  that produced it is likely to notice on its own.
+- **Why the third model is a red-team, not a voter:** majority voting and
+  judge setups reward agreement, not correctness -- if both primary
+  models share a correlated blind spot, voting doesn't catch it. The
+  optional third model is instructed to look for shared gaps, and never
+  ranks or picks a winner.
+  ([ADR 002](docs/decisions/002-red-team-not-voting.md))
+- **Why every stage is persisted and inspectable:** a synthesis you can't
+  trace back to the disagreement that produced it is not meaningfully
+  more auditable than a single model's answer. Every independent
+  analysis, critique, red-team report, and revision is stored, not just
+  the final text.
+
+Full reasoning: [`docs/why-deliberation.md`](docs/why-deliberation.md).
+
+## Architecture
+
+```
+        CLI (llm-deliberate)      Browser UI (llm-deliberate-ui)
+                 │                          │
+                 └────────────┬─────────────┘
+                              ▼
+                    DeliberationService
+                 create_run / start_run / resume_run /
+                 retry_stage / get_run / list_runs
+                              │
+              ┌───────────────┴───────────────┐
+              ▼                                ▼
+      Repository (SQLite)              DeliberationOrchestrator
+   runs / stages / artifacts           provider adapters:
+   data/deliberation.db                OpenAI, Anthropic, Gemini
+```
+
+Both interfaces call the same service layer; neither talks to SQLite or
+the model providers directly. Details: [`docs/architecture.md`](docs/architecture.md).
+
+## Deliberation flow
+
+```
 question
   │
   ├───────────────┐
   ▼               ▼
-OpenAI          Anthropic
-independent     independent
-analysis A      analysis B
+analysis_a      analysis_b        independent -- neither sees the other
+(OpenAI)        (Anthropic)
   │               │
   └───────┬───────┘
           │
-          ├─────────────┐
-          ▼             ▼
-    cross-critiques   Gemini (optional)
-                      shared-blind-spot
-                      red-team
-          │             │
-          └──────┬──────┘
-                 ▼
-          A and B revise
-                 │
-                 ▼
-          final synthesis
-                 │
-                 ▼
-          Markdown report
+          ├─────────────┬─────────────┐
+          ▼             ▼             ▼
+  critique_a_of_b  critique_b_of_a  red_team        optional; looks for
+                                     (Gemini)         blind spots shared
+                                                       by both -- does not
+                                                       vote or rank
+          │             │             │
+          └──────┬──────┴──────┬──────┘
+                 ▼              ▼
+           revision_a      revision_b
+                 │              │
+                 └──────┬───────┘
+                        ▼
+                    synthesis
+                        │
+                        ▼
+        persisted run (SQLite) + optional Markdown export
 ```
 
-The third model is deliberately **not a judge**. Its job is to identify
-correlated failure modes: assumptions or blind spots shared by both main
-candidates.
+## Screenshots
 
-## Profiles
+_Not yet included. Planned: the new-deliberation form, the live pipeline
+view mid-run, and the final-answer page with expandable artifacts._
 
-| Profile | OpenAI | Anthropic | Optional red-team |
-|---|---|---|---|
-| `economy` | GPT-5.6 Terra | Claude Sonnet 5 | Gemini 3.8 Flash |
-| `balanced` | GPT-5.6 Sol | Claude Opus 5 | Gemini 3.8 Flash |
-| `max` | GPT-5.6 Sol | Claude Fable 5 | Gemini 3.8 Flash |
+<!-- docs/images/new-run.png -->
+<!-- docs/images/pipeline.png -->
+<!-- docs/images/result.png -->
 
-`balanced` is the default so testing does not accidentally use Fable's higher
-token price. All model IDs can be overridden in `.env`.
+## Quick start
 
-## WSL / Ubuntu setup
+Requires Python 3.11+ and API keys for OpenAI and Anthropic (Gemini only
+if you plan to use the red-team stage).
 
 ```bash
-cd ~/projects
-unzip llm-deliberation.zip
+git clone https://github.com/kadrik6/llm-deliberation.git
 cd llm-deliberation
 
-python3 -m venv .venv
-source .venv/bin/activate
+python -m venv .venv
+source .venv/bin/activate        # macOS / Linux / WSL
+# .venv\Scripts\Activate.ps1     # Windows PowerShell
 
-pip install -U pip
-pip install -e .
+pip install -e ".[dev]"
 
 cp .env.example .env
+# edit .env and add OPENAI_API_KEY / ANTHROPIC_API_KEY / (optional) GEMINI_API_KEY
 ```
 
-Open `.env` and add:
-
-```dotenv
-OPENAI_API_KEY=...
-ANTHROPIC_API_KEY=...
-GEMINI_API_KEY=...
-```
-
-Never commit `.env`.
-
-## Run with all three models
-
-```bash
-llm-deliberate --red-team \
-  "Should a small team build this product now, delay it, or reject it?"
-```
-
-## Run with only the two primary models
-
-```bash
-llm-deliberate --no-red-team \
-  "Should a small team build this product now, delay it, or reject it?"
-```
-
-## Maximum-quality Anthropic profile
-
-```bash
-llm-deliberate --profile max --red-team \
-  "Your difficult question here"
-```
-
-## Cheaper prompt-development profile
+**CLI:**
 
 ```bash
 llm-deliberate --profile economy --no-red-team \
-  "Test question"
+  "Should a small team build this product now, delay it, or reject it?"
 ```
 
-## Pipe a long question from a file
+**Local web UI:**
 
 ```bash
-cat question.md | llm-deliberate --red-team
+llm-deliberate-ui
+# open http://127.0.0.1:8765
 ```
 
-## Output
+The web UI binds to `127.0.0.1` only and has no authentication -- it is
+built for single-user local use. See
+[`docs/trust-model.md`](docs/trust-model.md).
 
-Every run writes a Markdown report under `runs/` unless `--output` is supplied.
-It contains:
+## Profiles
 
-- both independent answers;
-- both cross-critiques;
-- the optional third-model red-team report;
-- both revisions;
-- final synthesis;
-- token usage and an estimated per-call / total cost.
+Model selection is presented as a profile, not raw model names, because
+the meaningful choice for most users is "how much do I want to spend on
+this question," not which exact model ID to pick:
 
-Only the final synthesis is printed prominently to the terminal.
+| Profile | What it means |
+|---|---|
+| **Economy** | Fastest/cheapest. Good for routine deliberation. |
+| **Balanced** | Stronger models for important questions. |
+| **Max** | Highest-quality configuration for difficult decisions. |
 
-## Privacy choice
+Each profile maps to specific OpenAI/Anthropic/Gemini model IDs in
+`src/llm_deliberation/config.py`, all overridable via `.env`
+(`OPENAI_MODEL`, `ANTHROPIC_MODEL`, `GEMINI_MODEL`).
 
-The code explicitly sets `store=False` for OpenAI Responses and Gemini
-Interactions requests where supported by their APIs. Prompts are still sent to
-the cloud providers, so do not treat this as a fully local/private LLM system.
+## Red-team
 
-## Important design principle
+An optional third model (`--red-team` / `--no-red-team`, or a switch in
+the web UI) reviews both independent analyses. **It does not vote and
+does not rank the two candidates.** Its job is to name assumptions or
+blind spots the two primary models might share -- the kind of error a
+vote between the two of them would never catch. See
+[ADR 002](docs/decisions/002-red-team-not-voting.md) for the reasoning,
+including why this is unproven and off by default is a reasonable
+starting choice for some workflows.
 
-Do **not** let candidate B see candidate A before B has produced an independent
-answer. Otherwise B becomes anchored to A and much of the value of using
-different model families disappears.
+## Cost & token tracking
 
-The red-team model sees both initial answers because its role is different:
-find what *both* candidates may have missed.
+Every stage's input/output token counts and an estimated USD cost
+(`src/llm_deliberation/pricing.py` -- a hand-maintained snapshot, **not**
+a billing authority) are recorded in SQLite as soon as that stage
+succeeds, and the run's total is updated after every wave. The CLI prints
+the total on completion; the web UI shows it live while a run is in
+progress and in the run's history list.
 
-## Pricing snapshot
+## Retry & resume
 
-The local cost estimator is a snapshot, not a billing authority. Provider
-prices can change. Update `src/llm_deliberation/pricing.py` when needed.
+Runs are durable: a stage's result is written to SQLite the moment it
+succeeds, so a failure elsewhere in the pipeline never erases completed
+work. If a stage fails (a transient provider error, a rate limit), you
+can:
 
-Snapshot date: 2026-09-14.
+```bash
+llm-deliberate --resume <run_id>
+llm-deliberate --retry-stage <run_id> <stage_name>
+llm-deliberate --list-runs
+```
+
+or use the "Retry failed stage" / "Resume run" buttons in the web UI.
+Retrying only re-runs the targeted stage (and whatever it unblocks) --
+already-succeeded, already-paid-for stages are never repeated. See
+[ADR 003](docs/decisions/003-durable-sqlite-runs.md).
+
+## Privacy & security limitations
+
+- The application runs locally; **model requests do not.** Your question,
+  optional context, and every generated stage's text are sent to the
+  configured providers' APIs.
+- API keys are read from `.env`/environment only, never written to
+  SQLite, never included in Markdown exports, never sent to the browser,
+  never logged.
+- The web UI has no authentication and is meant for `127.0.0.1` only.
+- Model output is rendered as escaped text, never as executed
+  HTML/Markdown, to avoid the browser UI acting on adversarial content in
+  a model's response.
+- No analytics, no telemetry, no external CDN dependencies in the web UI.
+- SQLite and Markdown files are unencrypted local files; anyone with
+  filesystem access can read them.
+
+Full detail: [`docs/trust-model.md`](docs/trust-model.md) and
+[`SECURITY.md`](SECURITY.md).
+
+## Project status
+
+Experimental / pre-1.0. Functionally working (CLI and web UI both tested,
+including live smoke tests against real OpenAI/Anthropic calls), but:
+
+- no empirical evaluation of the central hypothesis yet (see above);
+- single-user, single-process design, not hardened for multi-user or
+  networked deployment;
+- no Windows launcher or editor integration yet (see Roadmap).
+
+## Roadmap
+
+- Evaluation harness implementing [`evals/README.md`](evals/README.md).
+- A small JSON API alongside the HTML routes, so a future editor
+  extension or Windows launcher can use `DeliberationService` without
+  screen-scraping the web UI.
+- Windows launcher (deliberately deferred, not started).
+- Structured/JSON stage outputs for machine-checkable claims.
+- Citation/evidence retrieval before synthesis.
+- Configurable retention policy for stored runs.
+
+## Evaluation plan
+
+Not yet run. See [`evals/README.md`](evals/README.md) for the intended
+comparison arms (single model / two independent models / + cross-critique
+/ full workflow with red-team), candidate metrics (factual error rate,
+unsupported claims, missed alternatives, answer quality, red-team
+contribution, cost, latency), and the intent to score blindly where
+feasible.
+
+## Development
+
+```bash
+pip install -e ".[dev]"
+pytest -q                    # offline: every provider call is faked, no API keys needed
+python -m compileall -q src
+```
+
+CI (`.github/workflows/tests.yml`) runs the same test suite on pushes and
+pull requests and never requires or uses real provider API keys.
+
+## License
+
+[MIT](LICENSE)

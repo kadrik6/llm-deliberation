@@ -1,0 +1,29 @@
+name: tests
+
+"on":
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install package with dev dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Byte-compile source
+        run: python -m compileall -q src
+
+      - name: Run test suite
+        # All tests substitute a fake orchestrator for the real LLM
+        # providers (see tests/conftest.py) and never call a real
+        # provider API. No API keys are required or read here.
+        run: pytest -q
