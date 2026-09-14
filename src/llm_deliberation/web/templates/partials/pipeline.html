@@ -1,0 +1,30 @@
+<div class="pipeline">
+{% for group in groups %}
+  <div class="stage-group">
+    <h3>{{ group.title }}</h3>
+    {% for row in group.rows %}
+      <div class="stage-row status-{{ 'disabled' if row.disabled else row.status }}">
+        <span class="stage-symbol">{{ '–' if row.disabled else row.symbol }}</span>
+        <span class="stage-label">{{ row.label }}</span>
+        {% if row.disabled %}
+          <span class="stage-note">disabled</span>
+        {% elif row.status == 'failed' %}
+          <span class="stage-error">{{ row.error }}</span>
+          <form method="post" action="/runs/{{ run_id }}/stages/{{ row.name }}/retry" class="inline-form">
+            <button type="submit">Retry failed stage</button>
+          </form>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+{% endfor %}
+</div>
+
+<div class="run-status-banner status-{{ status }}">
+  <p>Status: {{ status }}</p>
+  {% if status != 'succeeded' %}
+    <form method="post" action="/runs/{{ run_id }}/resume" class="inline-form">
+      <button type="submit">Resume run</button>
+    </form>
+  {% endif %}
+</div>

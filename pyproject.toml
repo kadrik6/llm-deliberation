@@ -12,15 +12,21 @@ dependencies = [
   "anthropic>=1.0.0",
   "google-genai>=2.3.0",
   "python-dotenv>=1.0.0",
+  "fastapi>=0.110.0",
+  "uvicorn>=0.29.0",
+  "jinja2>=3.1.0",
+  "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0.0",
+  "httpx>=0.27.0",
 ]
 
 [project.scripts]
 llm-deliberate = "llm_deliberation.cli:main"
+llm-deliberate-ui = "llm_deliberation.web.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

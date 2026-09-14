@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}New deliberation{% endblock %}
+{% block content %}
+<h1>New deliberation</h1>
+
+{% if missing_keys %}
+<div class="notice">
+  <p>Missing configuration: {{ missing_keys|join(", ") }}.</p>
+  <p class="hint">Add them to <code>.env</code> before starting a run. Red-team requires
+  <code>GEMINI_API_KEY</code> only when enabled.</p>
+</div>
+{% endif %}
+
+{% if error %}
+<div class="notice notice-error">
+  <p>{{ error }}</p>
+</div>
+{% endif %}
+
+<form method="post" action="/runs" id="new-run-form">
+  <label for="question">What do you want the models to think through?</label>
+  <textarea id="question" name="question" rows="8" required
+    placeholder="Describe the question or decision...">{{ question_value or "" }}</textarea>
+
+  <details {% if context_value %}open{% endif %}>
+    <summary>Add context (optional)</summary>
+    <label for="context" class="sr-only">Optional context</label>
+    <textarea id="context" name="context" rows="5"
+      placeholder="Extra background, constraints, prior discussion...">{{ context_value or "" }}</textarea>
+  </details>
+
+  <fieldset class="profiles">
+    <legend>Profile</legend>
+    {% for key, blurb in profiles %}
+    <label class="profile-option">
+      <input type="radio" name="profile" value="{{ key }}"
+        {% if key == default_profile %}checked{% endif %}>
+      <span class="profile-name">{{ key|capitalize }}</span>
+      <span class="profile-blurb">{{ blurb }}</span>
+    </label>
+    {% endfor %}
+  </fieldset>
+
+  <fieldset class="red-team">
+    <legend>Independent red-team</legend>
+    <label class="switch">
+      <input type="checkbox" name="red_team" value="1" {% if default_red_team %}checked{% endif %}>
+      <span>On</span>
+    </label>
+    <p class="hint">
+      A third model does not vote on the answer. It looks for assumptions and
+      blind spots shared by both primary models.
+    </p>
+  </fieldset>
+
+  <button type="submit" id="submit-btn">Deliberate</button>
+</form>
+{% endblock %}

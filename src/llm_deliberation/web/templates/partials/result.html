@@ -1,0 +1,31 @@
+<section class="final-answer">
+  <h2>Final answer</h2>
+  <div class="answer-actions">
+    <button type="button" id="copy-answer">Copy final answer</button>
+    <a href="/runs/{{ record.id }}/export" download>Export Markdown</a>
+  </div>
+  <pre class="answer-text" id="final-answer-text">{{ result.synthesis.text }}</pre>
+  <div class="summary-stats">
+    <span>Total cost: {{ cost }}</span>
+    <span>Duration: {{ elapsed }}</span>
+    <span>Profile: {{ record.profile }}</span>
+    <span>Red-team: {{ "on" if record.red_team_enabled else "off" }}</span>
+  </div>
+</section>
+
+<section class="artifacts">
+  {% for name, title in artifact_sections %}
+    {% set artifact = artifacts.get(name) %}
+    {% if artifact %}
+    <details>
+      <summary>{{ title }}</summary>
+      <pre>{{ artifact.text }}</pre>
+      <p class="artifact-meta">
+        {{ artifact.provider }} &middot; <code>{{ artifact.model }}</code> &middot;
+        {{ artifact.usage.input_tokens }} in / {{ artifact.usage.output_tokens }} out &middot;
+        ${{ "%.4f"|format(artifact.estimated_cost_usd) }}
+      </p>
+    </details>
+    {% endif %}
+  {% endfor %}
+</section>

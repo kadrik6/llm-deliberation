@@ -1,2 +1,3 @@
 [console_scripts]
 llm-deliberate = llm_deliberation.cli:main
+llm-deliberate-ui = llm_deliberation.web.app:main

@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Run {{ record.id }}{% endblock %}
+{% block content %}
+<div class="run-meta">
+  <h1>Deliberation</h1>
+  <p class="question-text"><strong>Question:</strong> {{ record.question }}</p>
+  {% if record.context %}
+  <p class="context-text"><strong>Context:</strong> {{ record.context }}</p>
+  {% endif %}
+  <div class="meta-row">
+    <span>Run ID: <code>{{ record.id }}</code></span>
+    <span>Profile: {{ record.profile }}</span>
+    <span>Red-team: {{ "on" if record.red_team_enabled else "off" }}</span>
+    <span>Elapsed: {{ elapsed }}</span>
+    <span>Cost: {{ cost }}</span>
+  </div>
+</div>
+
+{% if record.status == "succeeded" %}
+  {% include "partials/result.html" %}
+{% else %}
+  <div id="pipeline-container" data-run-id="{{ record.id }}" data-status="{{ record.status }}">
+    {% include "partials/pipeline.html" %}
+  </div>
+  <noscript><meta http-equiv="refresh" content="3"></noscript>
+{% endif %}
+{% endblock %}

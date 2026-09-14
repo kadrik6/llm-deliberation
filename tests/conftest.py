@@ -53,3 +53,14 @@ def service(tmp_path, monkeypatch, fake_orchestrator_state):
 
     db_path = tmp_path / "deliberation.db"
     return DeliberationService(db_path)
+
+
+@pytest.fixture
+def client(service):
+    from fastapi.testclient import TestClient
+
+    from llm_deliberation.web.app import create_app
+
+    app = create_app(service=service)
+    with TestClient(app, follow_redirects=True) as test_client:
+        yield test_client

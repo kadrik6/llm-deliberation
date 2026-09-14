@@ -151,11 +151,23 @@ class DeliberationService:
 
     async def _execute(self, run_id: str) -> RunRecord:
         run = self.repo.get_run(run_id)
-        settings = Settings.load(
-            profile_override=run.profile, red_team_override=run.red_team_enabled
-        )
-        settings.validate_keys()
-        orchestrator = DeliberationOrchestrator(settings)
+        try:
+            settings = Settings.load(
+                profile_override=run.profile, red_team_override=run.red_team_enabled
+            )
+            settings.validate_keys()
+            orchestrator = DeliberationOrchestrator(settings)
+        except Exception as exc:
+            # Setup failed before any stage could even attempt to run (e.g. a
+            # missing API key). Surface it on the first not-yet-succeeded stage
+            # so the run doesn't get stuck in "running" with nowhere to show
+            # the error, and mark the run itself failed.
+            stages = self.repo.list_stages(run_id)
+            first_pending = next((s for s in stages if s.status != "succeeded"), None)
+            if first_pending is not None:
+                self.repo.mark_stage_failed(first_pending.id, error=str(exc))
+            self.repo.update_run(run_id, status="failed")
+            return self.get_run(run_id)
 
         effective_question = run.question
         if run.context:
@@ -210,6 +222,10 @@ class DeliberationService:
                         estimated_cost_usd=outcome.estimated_cost_usd,
                     )
                     texts[name] = outcome.text
+
+            self.repo.update_run(
+                run_id, estimated_total_cost_usd=self.repo.sum_stage_costs(run_id)
+            )
 
             if run_failed:
                 break
