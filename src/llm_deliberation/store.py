@@ -67,6 +67,15 @@ class RunRecord:
     # before this field existed are migrated to "en" (see
     # _RUN_MIGRATION_COLUMNS), never inferred from their stored content.
     language: str = "en"
+    # Optional, user-defined per-run hard cost cap -- an application-side
+    # safety limit, never the provider account's own balance (see
+    # cost_budget.py). Stored as TEXT (the Decimal's exact string form, e.g.
+    # "0.75") rather than REAL so the budget comparison never goes through a
+    # float round-trip; None means "no cap" (current, pre-budget-feature
+    # behavior), not "$0". A run created before this field existed is
+    # migrated to NULL/None -- see _RUN_MIGRATION_COLUMNS -- which is the
+    # correct, backward-compatible "no cap" default, not an invented one.
+    max_run_cost_usd: str | None = None
     stages: list[StageRecord] = field(default_factory=list)
 
 
@@ -138,6 +147,8 @@ _STAGE_MIGRATION_COLUMNS: dict[str, str] = {
 # backward-compatible default, never inferred from its stored content.
 _RUN_MIGRATION_COLUMNS: dict[str, str] = {
     "language": "TEXT NOT NULL DEFAULT 'en'",
+    # Nullable, no default value beyond SQL NULL -- see RunRecord.max_run_cost_usd.
+    "max_run_cost_usd": "TEXT",
 }
 
 
@@ -185,13 +196,35 @@ class Repository:
         profile: str,
         red_team_enabled: bool,
         language: str = "en",
+        max_run_cost_usd: str | None = None,
     ) -> None:
         self._conn.execute(
             "INSERT INTO runs "
             "(id, question, context, profile, red_team_enabled, status, "
-            "created_at, estimated_total_cost_usd, language) "
-            "VALUES (?, ?, ?, ?, ?, 'pending', ?, 0.0, ?)",
-            (run_id, question, context, profile, int(red_team_enabled), utc_now_iso(), language),
+            "created_at, estimated_total_cost_usd, language, max_run_cost_usd) "
+            "VALUES (?, ?, ?, ?, ?, 'pending', ?, 0.0, ?, ?)",
+            (
+                run_id,
+                question,
+                context,
+                profile,
+                int(red_team_enabled),
+                utc_now_iso(),
+                language,
+                max_run_cost_usd,
+            ),
+        )
+        self._conn.commit()
+
+    def update_run_budget(self, run_id: str, max_run_cost_usd: str | None) -> None:
+        """Change a run's stored budget cap -- the "Increase budget" action
+        on a run blocked by run_budget_exceeded (see service.py). Deliberately
+        separate from update_run(): a budget change is a distinct, explicit
+        user action worth its own narrow method rather than one more optional
+        keyword on the general updater.
+        """
+        self._conn.execute(
+            "UPDATE runs SET max_run_cost_usd = ? WHERE id = ?", (max_run_cost_usd, run_id)
         )
         self._conn.commit()
 
@@ -270,6 +303,7 @@ class Repository:
             completed_at=row["completed_at"],
             estimated_total_cost_usd=row["estimated_total_cost_usd"],
             language=row["language"],
+            max_run_cost_usd=row["max_run_cost_usd"],
         )
 
     # -- stages ------------------------------------------------------

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 
 import pytest
 
@@ -49,6 +50,21 @@ class FakeOrchestrator:
         self.settings = settings
         self._state = state
 
+    def stage_upper_bound_cost(
+        self, stage: str, question: str, texts: dict[str, str], *, language: str = "en"
+    ) -> Decimal:
+        # Deterministic and independent of question/context length --
+        # FakeOrchestrator never touches real pricing/models. Tests that
+        # exercise the real budget guard set state["upper_bound_cost_usd"]
+        # to either a single Decimal (applied to every stage) or a
+        # dict[str, Decimal] (per-stage, falling back to a tiny default for
+        # any stage not listed) to control exactly which stage(s) a given
+        # budget should or shouldn't admit.
+        override = self._state.get("upper_bound_cost_usd")
+        if isinstance(override, dict):
+            return override.get(stage, Decimal("0.0001"))
+        return override if override is not None else Decimal("0.0001")
+
     async def run_stage(
         self,
         stage: str,
@@ -57,10 +73,12 @@ class FakeOrchestrator:
         *,
         gemini_mode: str = "chain",
         language: str = "en",
+        budget_guard=None,
     ) -> ModelResponse:
         self._state["log"].append(stage)
         self._state.setdefault("gemini_modes", []).append((stage, gemini_mode))
         self._state.setdefault("languages", []).append((stage, language))
+        self._state.setdefault("budget_guards", []).append((stage, budget_guard))
 
         fail_with = self._state.get("fail_with", {})
         if stage in fail_with:
@@ -87,6 +105,37 @@ def fake_orchestrator_state():
     return {"log": [], "fail": set()}
 
 
+def _always_ready_readiness_report(settings, *, red_team_enabled: bool, force: bool = False):
+    """Stands in for readiness.check_run_readiness: no network, always
+    "ready" -- mirrors FakeOrchestrator's role for provider generation
+    calls, but for the readiness preflight (see web/app.py's submit_run,
+    which now gates run creation on DeliberationService.check_readiness).
+    A test that specifically exercises the readiness-blocked path overrides
+    this via its own monkeypatch.setattr on service_module.readiness's
+    individual check_* functions or on this fixture's target directly,
+    layered on top (see test_readiness.py's pattern).
+    """
+    from llm_deliberation.readiness import ProviderReadiness, ReadinessReport, _now_iso
+
+    def _ready(provider: str, model: str, check_type: str) -> ProviderReadiness:
+        return ProviderReadiness(
+            provider=provider,
+            configured_model=model,
+            status="ready",
+            checked_at=_now_iso(),
+            check_type=check_type,
+            paid_probe=False,
+            estimated_probe_cost_usd=0.0,
+            user_message="Provider readiness check passed.",
+        )
+
+    return ReadinessReport(
+        openai=_ready("openai", settings.openai_model, "model_retrieve"),
+        anthropic=_ready("anthropic", settings.anthropic_model, "model_retrieve"),
+        gemini=_ready("gemini", settings.gemini_model, "model_get") if red_team_enabled else None,
+    )
+
+
 @pytest.fixture
 def service(tmp_path, monkeypatch, fake_orchestrator_state):
     monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
@@ -99,6 +148,7 @@ def service(tmp_path, monkeypatch, fake_orchestrator_state):
         return FakeOrchestrator(settings, state=fake_orchestrator_state)
 
     monkeypatch.setattr(service_module, "DeliberationOrchestrator", factory)
+    monkeypatch.setattr(service_module.readiness, "check_run_readiness", _always_ready_readiness_report)
 
     from llm_deliberation.service import DeliberationService
 

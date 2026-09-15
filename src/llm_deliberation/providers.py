@@ -4,8 +4,10 @@ import random
 import time
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
+from decimal import Decimal
 from typing import Callable
 
+from llm_deliberation.cost_budget import BudgetExceededError, RunBudgetGuard, estimate_max_call_cost_usd
 from llm_deliberation.pricing import estimate_cost
 from llm_deliberation.types import ModelResponse, Usage
 
@@ -316,6 +318,184 @@ class ProviderGenerationError(RuntimeError):
         self.reason = reason
 
 
+def budget_exceeded_to_provider_error(
+    exc: BudgetExceededError,
+    *,
+    requested_model: str,
+    attempts: int,
+    attempt_log: list[dict],
+    fallback_used: bool,
+    fallback_reason: str | None,
+    sunk_cost_usd: float = 0.0,
+) -> ProviderGenerationError:
+    """Convert a cost_budget.BudgetExceededError into a ProviderGenerationError
+    so the run-budget hard guard reuses the exact same persistence/UI path as
+    every other stage failure (service._execute's ProviderGenerationError
+    branch, store.StageRecord.failure_reason) instead of a parallel one.
+
+    `sunk_cost_usd` is the cost already incurred by earlier attempts in
+    *this* stage execution (0.0 for the common case: blocked before any
+    attempt was made this stage-execution) -- never the blocked call's own
+    estimated cost, since that call was never sent.
+    """
+    return ProviderGenerationError(
+        str(exc),
+        requested_model=requested_model,
+        attempts=attempts,
+        attempt_log=attempt_log,
+        fallback_used=fallback_used,
+        fallback_reason=fallback_reason,
+        estimated_cost_usd=sunk_cost_usd,
+        reason="run_budget_exceeded",
+    )
+
+
+def _looks_like_billing_message(text: str) -> bool:
+    """Best-effort detection of a billing/quota rejection inside an error's
+    own message/body text. Neither OpenAI nor Anthropic's SDK exposes a
+    dedicated billing exception type (see readiness.py's module docstring):
+    OpenAI folds "insufficient_quota" into the same 429 RateLimitError used
+    for ordinary rate limiting, and Anthropic's "credit balance too low"
+    is an ordinary 400 BadRequestError. This is intentionally narrow (a small
+    fixed set of known phrases actually used by these two providers' error
+    bodies) rather than a general keyword search, so it does not
+    misclassify an unrelated 429/400 as a billing problem.
+    """
+    lowered = text.lower()
+    return any(
+        phrase in lowered
+        for phrase in (
+            "insufficient_quota",
+            "exceeded your current quota",
+            "credit balance",
+            "billing",
+        )
+    )
+
+
+# Readiness status vocabulary shared by classify_openai_readiness_error /
+# classify_anthropic_readiness_error / classify_gemini_readiness_error (see
+# readiness.py, which is the only caller). Kept here, next to
+# classify_gemini_error, rather than in readiness.py, so every provider
+# SDK-exception classifier lives in one place next to the SDK calls it
+# describes -- readiness.py only orchestrates cache/dataclass concerns.
+READINESS_STATUSES: frozenset[str] = frozenset(
+    {
+        "ready",
+        "unavailable",
+        "auth_error",
+        "billing_error",
+        "permission_error",
+        "model_unavailable",
+        "rate_limited",
+        "transient_error",
+        "unknown",
+    }
+)
+
+
+def classify_openai_readiness_error(exc: BaseException) -> tuple[str, str]:
+    """Classify an exception from `openai.OpenAI(...).models.retrieve(...)`.
+
+    Returns (status, human_message) using READINESS_STATUSES. See the module
+    docstring's readiness table (reported before implementation) for exactly
+    which failures this can and cannot detect -- most notably, OpenAI's
+    billing/quota rejection is not guaranteed to surface on this
+    non-generation endpoint at all; when it does, it arrives as the same
+    RateLimitError used for ordinary rate limiting, distinguished only by
+    _looks_like_billing_message.
+    """
+    import openai
+
+    if isinstance(exc, openai.AuthenticationError):
+        return "auth_error", "OpenAI rejected the API key (authentication failed)."
+    if isinstance(exc, openai.PermissionDeniedError):
+        return "permission_error", "OpenAI denied access to this model with the configured key."
+    if isinstance(exc, openai.NotFoundError):
+        return "model_unavailable", "OpenAI reports the model is not found or not accessible."
+    if isinstance(exc, openai.RateLimitError):
+        body_text = str(getattr(exc, "body", "") or "") + str(exc)
+        if _looks_like_billing_message(body_text):
+            return "billing_error", "OpenAI reports a billing/quota problem on this account."
+        return "rate_limited", "OpenAI is currently rate-limiting this API key."
+    if isinstance(
+        exc, (openai.InternalServerError, openai.APIConnectionError, openai.APITimeoutError)
+    ):
+        return "transient_error", f"OpenAI's API is temporarily unavailable: {exc}"
+    if isinstance(exc, openai.APIStatusError):
+        return "unknown", f"OpenAI returned an unexpected error (HTTP {exc.status_code}): {exc}"
+    return "unknown", f"Unexpected error contacting OpenAI: {exc}"
+
+
+def classify_anthropic_readiness_error(exc: BaseException) -> tuple[str, str]:
+    """Classify an exception from
+    `anthropic.Anthropic(...).models.retrieve(...)`. Same caveats as
+    classify_openai_readiness_error re: billing not being guaranteed to
+    surface on a non-generation endpoint.
+    """
+    import anthropic
+
+    if isinstance(exc, anthropic.AuthenticationError):
+        return "auth_error", "Anthropic rejected the API key (authentication failed)."
+    if isinstance(exc, anthropic.PermissionDeniedError):
+        return "permission_error", "Anthropic denied access to this model with the configured key."
+    if isinstance(exc, anthropic.NotFoundError):
+        return "model_unavailable", "Anthropic reports the model is not found or not accessible."
+    if isinstance(exc, anthropic.BadRequestError):
+        if _looks_like_billing_message(str(exc)):
+            return "billing_error", "Anthropic reports a billing problem on this account (e.g. low credit balance)."
+        return "unknown", f"Anthropic rejected the request: {exc}"
+    if isinstance(exc, anthropic.RateLimitError):
+        if _looks_like_billing_message(str(exc)):
+            return "billing_error", "Anthropic reports a billing/quota problem on this account."
+        return "rate_limited", "Anthropic is currently rate-limiting this API key."
+    if isinstance(
+        exc,
+        (
+            anthropic.OverloadedError,
+            anthropic.InternalServerError,
+            anthropic.APIConnectionError,
+            anthropic.APITimeoutError,
+        ),
+    ):
+        return "transient_error", f"Anthropic's API is temporarily unavailable: {exc}"
+    if isinstance(exc, anthropic.APIStatusError):
+        return "unknown", f"Anthropic returned an unexpected error: {exc}"
+    return "unknown", f"Unexpected error contacting Anthropic: {exc}"
+
+
+def classify_gemini_readiness_error(exc: BaseException) -> tuple[str, str]:
+    """Classify an exception from
+    `genai.Client(...).models.get(model=...)`, at the same status
+    granularity as the OpenAI/Anthropic classifiers above (finer than
+    classify_gemini_error's plain transient/non-transient split, which
+    remains the one used for the red_team generation retry/fallback policy
+    -- readiness and generation-retry classification are deliberately
+    separate concerns, even though both read the same exception types).
+    """
+    from google.genai import errors as genai_errors
+
+    if isinstance(exc, genai_errors.ClientError):
+        code = getattr(exc, "code", None)
+        message = (getattr(exc, "message", None) or str(exc))
+        if code == 401:
+            return "auth_error", f"Gemini rejected the API key (authentication failed): {message}"
+        if code == 403:
+            return "permission_error", f"Gemini denied access to this model with the configured key: {message}"
+        if code == 404:
+            return "model_unavailable", f"Gemini reports the model is not found or not accessible: {message}"
+        if code == 429:
+            if _looks_like_billing_message(message):
+                return "billing_error", f"Gemini reports a billing/quota problem on this account: {message}"
+            return "rate_limited", f"Gemini is currently rate-limiting this API key: {message}"
+        return "unknown", f"Gemini rejected the request (HTTP {code}): {message}"
+    if isinstance(exc, genai_errors.ServerError):
+        code = getattr(exc, "code", "unknown")
+        message = (getattr(exc, "message", None) or "").strip() or "no message"
+        return "transient_error", f"Gemini's API is temporarily unavailable (HTTP {code}): {message}"
+    return "transient_error", f"Unexpected error contacting Gemini: {exc}"
+
+
 def classify_gemini_error(exc: BaseException) -> tuple[bool, str]:
     """Classify a Gemini SDK exception as transient (fallback-eligible) or not.
 
@@ -468,10 +648,18 @@ class GeminiFallbackProvider(Provider):
         # callers hitting the same overloaded model don't retry in lockstep.
         return base * (0.5 + self._jitter())
 
-    def generate(self, *, system: str, prompt: str, mode: str = "chain") -> ModelResponse:
+    def generate(
+        self,
+        *,
+        system: str,
+        prompt: str,
+        mode: str = "chain",
+        budget_guard: RunBudgetGuard | None = None,
+    ) -> ModelResponse:
         if mode not in ("chain", "preferred_only"):
             raise ValueError(f"Unknown Gemini fallback mode: {mode!r}")
         chain = self.models if mode == "chain" else self.models[:1]
+        prompt_chars = len(system) + len(prompt)
 
         attempt_log: list[_Attempt] = []
         failed_cost = 0.0
@@ -500,6 +688,33 @@ class GeminiFallbackProvider(Provider):
                         reason=last_incomplete_reason or "provider_error",
                     )
 
+                if budget_guard is not None:
+                    # Every retry and every fallback-chain model switch is
+                    # itself a new paid call -- gated the same way the very
+                    # first attempt is, using this specific model's own
+                    # price (fallback models are often, but not always,
+                    # cheaper than the preferred model, so re-pricing per
+                    # model here is deliberate, not reused from the chain's
+                    # first entry). See cost_budget.py / Section 9 of the
+                    # task brief: automatic retries must never bypass the
+                    # user's cost guard.
+                    estimated_next = estimate_max_call_cost_usd(
+                        model, prompt_chars=prompt_chars, max_output_tokens=self.max_output_tokens
+                    )
+                    try:
+                        budget_guard.check(estimated_next)
+                    except BudgetExceededError as budget_exc:
+                        raise budget_exceeded_to_provider_error(
+                            budget_exc,
+                            requested_model=self.models[0],
+                            attempts=len(attempt_log),
+                            attempt_log=[a.to_dict() for a in attempt_log],
+                            fallback_used=len(attempt_log) > 0
+                            and attempt_log[-1].model != self.models[0],
+                            fallback_reason=last_reason,
+                            sunk_cost_usd=failed_cost,
+                        ) from budget_exc
+
                 delay_before = 0.0
                 if retry_index > 0:
                     delay_before = self._jittered_delay(self.retry_delays[retry_index - 1])
@@ -512,6 +727,14 @@ class GeminiFallbackProvider(Provider):
                     is_transient, reason = classify_gemini_error(exc)
                     attempt_cost = _cost_of_failed_attempt(exc, model)
                     failed_cost += attempt_cost
+                    if budget_guard is not None and attempt_cost:
+                        # Recorded immediately (not just at stage end) so the
+                        # *next* iteration's check() above already accounts
+                        # for this attempt's real spend -- a long retry/
+                        # fallback chain must not be able to blow through the
+                        # budget just because nothing resyncs it until the
+                        # stage finishes.
+                        budget_guard.record_actual(Decimal(str(attempt_cost)))
                     last_reason = reason
                     attempt_log.append(
                         _Attempt(
@@ -550,6 +773,8 @@ class GeminiFallbackProvider(Provider):
                         reason = f"{model} returned {response.incomplete_reason.replace('_', ' ')}"
                         last_reason = reason
                         failed_cost += response.estimated_cost_usd
+                        if budget_guard is not None and response.estimated_cost_usd:
+                            budget_guard.record_actual(Decimal(str(response.estimated_cost_usd)))
                         attempt_log.append(
                             _Attempt(
                                 model=model,

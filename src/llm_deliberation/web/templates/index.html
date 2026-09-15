@@ -16,6 +16,42 @@
 </div>
 {% endif %}
 
+{% if gemini_unavailable_choice %}
+<div class="notice notice-warning">
+  <p>{{ "gemini_unavailable_notice"|t }}</p>
+  {% if readiness and readiness.gemini %}<p class="hint">{{ readiness.gemini.user_message }}</p>{% endif %}
+</div>
+{% endif %}
+
+<section class="readiness-panel">
+  <h2>{{ "readiness_heading"|t }}</h2>
+  {% if readiness %}
+    <ul class="readiness-list">
+      <li class="readiness-{{ readiness.openai.status }}">
+        <strong>OpenAI</strong> &mdash; {{ ("readiness_status_" ~ readiness.openai.status)|t }}
+        {% if not readiness.openai.ready %}<span class="readiness-detail">{{ readiness.openai.user_message }}</span>{% endif %}
+      </li>
+      <li class="readiness-{{ readiness.anthropic.status }}">
+        <strong>Anthropic</strong> &mdash; {{ ("readiness_status_" ~ readiness.anthropic.status)|t }}
+        {% if not readiness.anthropic.ready %}<span class="readiness-detail">{{ readiness.anthropic.user_message }}</span>{% endif %}
+      </li>
+      {% if readiness.gemini %}
+      <li class="readiness-{{ readiness.gemini.status }}">
+        <strong>Gemini</strong> &mdash; {{ ("readiness_status_" ~ readiness.gemini.status)|t }}
+        {% if not readiness.gemini.ready %}<span class="readiness-detail">{{ readiness.gemini.user_message }}</span>{% endif %}
+      </li>
+      {% endif %}
+    </ul>
+    <p class="hint">{{ "readiness_checked_at_label"|t }}: {{ readiness.openai.checked_at|fmt_datetime }}</p>
+    <p class="hint">{{ "readiness_disclaimer"|t }}</p>
+  {% else %}
+    <p class="hint">{{ "readiness_not_checked"|t }}</p>
+  {% endif %}
+  <button type="submit" form="new-run-form" formaction="/providers/check" formmethod="post">
+    {{ ("check_again_button" if readiness else "check_providers_button")|t }}
+  </button>
+</section>
+
 <form method="post" action="/runs" id="new-run-form">
   <label for="question">{{ "question_label"|t }}</label>
   <textarea id="question" name="question" rows="8" required
@@ -48,8 +84,10 @@
         {% if key == default_profile %}checked{% endif %}>
       <span class="profile-name">{{ ("profile_name_" ~ key)|t }}</span>
       <span class="profile-blurb">{{ blurb_key|t }}</span>
+      <span class="profile-cost-estimate">{{ "cost_estimate_label"|t }}: {{ cost_estimates[key] }}</span>
     </label>
     {% endfor %}
+    <p class="hint">{{ "cost_estimate_disclaimer"|t }}</p>
   </fieldset>
 
   <fieldset class="profiles language">
@@ -73,7 +111,19 @@
     <p class="hint">{{ "red_team_hint"|t }}</p>
   </fieldset>
 
+  <fieldset class="budget">
+    <legend>{{ "max_run_cost_label"|t }}</legend>
+    <label for="max_run_cost" class="sr-only">{{ "max_run_cost_label"|t }}</label>
+    <input type="number" id="max_run_cost" name="max_run_cost" min="0.01" step="0.01"
+      placeholder="{{ 'max_run_cost_placeholder'|t }}"
+      value="{{ max_run_cost_value or '' }}">
+    <p class="hint">{{ "max_run_cost_helper"|t }}</p>
+  </fieldset>
+
   <p class="privacy-disclosure">{{ "privacy_disclosure"|t }}</p>
+  {% if gemini_unavailable_choice %}
+  <button type="submit" name="confirm_no_red_team" value="1">{{ "start_without_red_team_button"|t }}</button>
+  {% endif %}
   <button type="submit" id="submit-btn" data-starting-label="{{ 'starting_label'|t }}">{{ "start_deliberation"|t }}</button>
 </form>
 {% endblock %}

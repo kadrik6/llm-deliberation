@@ -12,8 +12,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from llm_deliberation import convergence, report
-from llm_deliberation.config import default_profile, default_red_team_enabled
+from llm_deliberation.config import PROFILES, Settings, default_profile, default_red_team_enabled
+from llm_deliberation.cost_budget import InvalidBudgetError, estimate_run_cost_range, format_usd
 from llm_deliberation.prompts import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES
+from llm_deliberation.readiness import ReadinessReport
 from llm_deliberation.service import (
     MAX_QUESTION_LENGTH,
     QUESTION_LENGTH_WARNING_THRESHOLD,
@@ -77,7 +79,31 @@ def _ui_lang(request: Request) -> str:
     return lang if lang in SUPPORTED_UI_LANGUAGES else DEFAULT_UI_LANGUAGE
 
 
+def _cost_estimates(red_team_enabled: bool) -> dict[str, str]:
+    """Deterministic pre-run cost range per profile (see cost_budget.py) at
+    the given red-team on/off state. Not reactive to the actual typed
+    question/context (see cost_budget.estimate_run_cost_range's docstring)
+    -- a declared approximation, always shown as a range, never a single
+    number claiming precision it doesn't have.
+    """
+    estimates = {}
+    for profile in PROFILE_ORDER:
+        settings = Settings.load(profile_override=profile, red_team_override=red_team_enabled)
+        estimate = estimate_run_cost_range(
+            openai_model=settings.openai_model,
+            anthropic_model=settings.anthropic_model,
+            gemini_model=settings.gemini_model,
+            convergence_provider=settings.convergence_provider,
+            convergence_model=settings.convergence_model,
+            red_team_enabled=red_team_enabled,
+            max_output_tokens=settings.max_output_tokens,
+        )
+        estimates[profile] = f"{format_usd(estimate.low_usd)}–{format_usd(estimate.high_usd)}"
+    return estimates
+
+
 def _profile_context(*, ui_lang: str, **overrides: object) -> dict:
+    red_team_default = overrides.get("default_red_team", default_red_team_enabled())
     base = {
         "ui_lang": ui_lang,
         "profiles": [(key, PROFILE_BLURB_KEYS[key]) for key in PROFILE_ORDER],
@@ -98,6 +124,13 @@ def _profile_context(*, ui_lang: str, **overrides: object) -> dict:
         "question_max_length": MAX_QUESTION_LENGTH,
         "question_recommended_length": RECOMMENDED_QUESTION_LENGTH,
         "question_warn_threshold": QUESTION_LENGTH_WARNING_THRESHOLD,
+        "cost_estimates": _cost_estimates(bool(red_team_default)),
+        "max_run_cost_value": None,
+        # None = "Check providers" not yet pressed for this page view (see
+        # index.html); otherwise a readiness.ReadinessReport from a manual
+        # "Check providers" click or a blocked submit_run attempt.
+        "readiness": None,
+        "gemini_unavailable_choice": False,
     }
     base.update(overrides)
     return base
@@ -202,6 +235,41 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
             request, "index.html", _profile_context(ui_lang=_ui_lang(request))
         )
 
+    @app.post("/providers/check")
+    async def check_providers(
+        request: Request,
+        profile: str = Form(...),
+        red_team: str | None = Form(None),
+        language: str = Form(DEFAULT_LANGUAGE),
+        question: str = Form(""),
+        context: str = Form(""),
+        max_run_cost: str = Form(""),
+    ):
+        """Manual "Check providers" action -- always a forced recheck (a
+        deliberate user click bypasses the readiness cache; see
+        readiness.py). Re-renders the New Deliberation form with whatever
+        the visitor had already typed preserved, exactly like submit_run's
+        own validation-error round-trip.
+        """
+        svc: DeliberationService = request.app.state.service
+        ui_lang = _ui_lang(request)
+        report_result = svc.check_readiness(profile, bool(red_team), force=True)
+        return templates.TemplateResponse(
+            request,
+            "index.html",
+            _profile_context(
+                ui_lang=ui_lang,
+                default_profile=profile,
+                default_red_team=bool(red_team),
+                default_language=language,
+                question_value=question.strip() or None,
+                context_value=context.strip() or None,
+                max_run_cost_value=max_run_cost.strip() or None,
+                readiness=report_result,
+                gemini_unavailable_choice=report_result.gemini_blocked,
+            ),
+        )
+
     @app.get("/ui-language/{lang}")
     async def set_ui_language(lang: str, next: str = "/"):
         """Switch the viewer's interface-chrome language. A plain cookie,
@@ -222,69 +290,86 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
         profile: str = Form(...),
         red_team: str | None = Form(None),
         language: str = Form(DEFAULT_LANGUAGE),
+        max_run_cost: str = Form(""),
+        # Set only by the distinct "Start without red-team" button shown
+        # after a Gemini-unavailable notice (see index.html) -- an explicit
+        # user choice, never an automatic/silent fallback (Section 3 of the
+        # task brief: "Do not silently disable red-team").
+        confirm_no_red_team: str | None = Form(None),
     ):
         svc: DeliberationService = request.app.state.service
         ui_lang = _ui_lang(request)
         question = question.strip()
         context_value = context.strip() or None
+        red_team_requested = bool(red_team) and not bool(confirm_no_red_team)
 
-        if not question:
+        def _rerender(*, error: str | None, status_code: int = 400, **extra: object):
+            fields: dict[str, object] = {
+                "ui_lang": ui_lang,
+                "default_profile": profile,
+                "default_red_team": red_team_requested,
+                "default_language": language,
+                "error": error,
+                "question_value": question,
+                "context_value": context_value,
+                "max_run_cost_value": max_run_cost.strip() or None,
+            }
+            fields.update(extra)  # e.g. gemini_unavailable_choice overrides default_red_team to False
             return templates.TemplateResponse(
                 request,
                 "index.html",
-                _profile_context(
-                    ui_lang=ui_lang,
-                    default_profile=profile,
-                    default_red_team=bool(red_team),
-                    default_language=language,
-                    error="Question cannot be empty.",
-                    question_value=question,
-                    context_value=context_value,
-                ),
-                status_code=400,
+                _profile_context(**fields),
+                status_code=status_code,
+            )
+
+        if not question:
+            return _rerender(error="Question cannot be empty.")
+
+        # Provider readiness preflight -- uses the readiness cache (a fresh
+        # cached result is reused, so pressing Start right after "Check
+        # providers" never re-probes), and never creates a run or a paid
+        # deliberation stage when a required provider isn't ready (Section 3
+        # of the task brief).
+        readiness_report = svc.check_readiness(profile, red_team_requested)
+        if not readiness_report.required_ready:
+            return _rerender(
+                error=translate("readiness_required_failed_notice", ui_lang),
+                readiness=readiness_report,
+            )
+        if readiness_report.gemini_blocked:
+            # Explicit choice, never a silent downgrade: the form re-renders
+            # with red-team's checkbox now off and a clear notice + a
+            # distinct "Start without red-team" button (which sets
+            # confirm_no_red_team on the next submit) alongside the normal
+            # Start button (effectively "Check again" once red-team is
+            # re-checked/re-enabled) and the user's browser Back button
+            # ("Cancel").
+            return _rerender(
+                error=None,
+                status_code=200,  # a choice to make, not a validation error
+                readiness=readiness_report,
+                gemini_unavailable_choice=True,
+                default_red_team=False,
             )
 
         try:
             run_id = svc.create_run(
                 question=question,
                 profile=profile,
-                red_team_enabled=bool(red_team),
+                red_team_enabled=red_team_requested,
                 context=context_value,
                 language=language,
+                max_run_cost_usd=max_run_cost.strip() or None,
             )
         except QuestionTooLongError:
             # A UX safeguard (see service.MAX_QUESTION_LENGTH), never a
             # provider/model call -- create_run raises before any stage
             # row or run row is inserted, so no run exists at this point.
-            return templates.TemplateResponse(
-                request,
-                "index.html",
-                _profile_context(
-                    ui_lang=ui_lang,
-                    default_profile=profile,
-                    default_red_team=bool(red_team),
-                    default_language=language,
-                    error=translate("question_too_long_error", ui_lang),
-                    question_value=question,
-                    context_value=context_value,
-                ),
-                status_code=400,
-            )
+            return _rerender(error=translate("question_too_long_error", ui_lang))
+        except InvalidBudgetError:
+            return _rerender(error=translate("invalid_budget_error", ui_lang))
         except ValueError as exc:
-            return templates.TemplateResponse(
-                request,
-                "index.html",
-                _profile_context(
-                    ui_lang=ui_lang,
-                    default_profile=profile,
-                    default_red_team=bool(red_team),
-                    default_language=language,
-                    error=str(exc),
-                    question_value=question,
-                    context_value=context_value,
-                ),
-                status_code=400,
-            )
+            return _rerender(error=str(exc))
 
         schedule(background_tasks, run_id, svc.start_run(run_id))
         return RedirectResponse(url=f"/runs/{run_id}", status_code=303)
@@ -305,6 +390,10 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
             "run_id": run_id,
             "status": record.status,
             "cost": f"${record.estimated_total_cost_usd:.4f}",
+            # Never the provider account's own balance (see cost_budget.py) --
+            # only the application-side cap the user configured for this run,
+            # or None when no cap was set (pre-budget-feature runs included).
+            "max_run_cost": record.max_run_cost_usd,
             "elapsed": format_duration(elapsed_seconds(record)),
             # A terminal run (succeeded/failed) is rendered once and never
             # opens a live connection -- retryability (a failed run can
@@ -316,6 +405,12 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
             # presenter.compute_deliberation_quality. Never calls a model,
             # so viewing this page never changes a run's cost or quality.
             "quality": compute_deliberation_quality(record),
+            # True once any stage was blocked by the run budget -- shown as
+            # a dedicated notice + "Update budget" form (see run_detail.html)
+            # rather than mixed into the per-stage error text.
+            "budget_blocked": any(
+                s.failure_reason == "run_budget_exceeded" for s in record.stages
+            ),
         }
 
         if record.status == "succeeded":
@@ -387,6 +482,30 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
     # -- retry / resume ---------------------------------------------------
+
+    @app.post("/runs/{run_id}/budget")
+    async def update_budget(
+        request: Request, run_id: str, max_run_cost: str = Form("")
+    ):
+        """"Increase budget" action on a run blocked by run_budget_exceeded
+        (see service._execute / run_detail.html). Only changes the stored
+        cap -- does not itself resume the run, so the two actions stay
+        explicit and the durable resume/retry flow is entirely reused
+        unchanged (Section 8 of the task brief's minimum acceptable
+        behavior: "preserve all completed work; allow them to resume after
+        increasing the stored budget").
+        """
+        svc: DeliberationService = request.app.state.service
+        ui_lang = _ui_lang(request)
+        try:
+            svc.get_run(run_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Run not found")
+        try:
+            svc.update_run_budget(run_id, max_run_cost.strip() or None)
+        except InvalidBudgetError:
+            raise HTTPException(status_code=400, detail=translate("invalid_budget_error", ui_lang))
+        return RedirectResponse(url=f"/runs/{run_id}", status_code=303)
 
     @app.post("/runs/{run_id}/resume")
     async def resume(request: Request, run_id: str, background_tasks: BackgroundTasks):

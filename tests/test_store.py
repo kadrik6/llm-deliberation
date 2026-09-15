@@ -116,6 +116,69 @@ def test_stage_cost_accumulates_across_a_failed_then_successful_attempt(tmp_path
     assert abs(stage.estimated_cost_usd - (0.05 + 0.03)) < 1e-9
 
 
+def test_run_created_before_max_run_cost_usd_column_existed_opens_correctly(tmp_path):
+    """Reproduces an old database (pre-budget-feature) by building the
+    `runs`/`stages` schema exactly as it existed before max_run_cost_usd was
+    added, using raw sqlite3 -- then opens it through Repository and
+    confirms the migration adds the column additively (NULL/None, never an
+    invented default) without touching any pre-existing row's data. Mirrors
+    the existing `language` column's own migration precedent.
+    """
+    import sqlite3
+
+    db_path = tmp_path / "old.sqlite3"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE runs (
+            id TEXT PRIMARY KEY,
+            question TEXT NOT NULL,
+            context TEXT,
+            profile TEXT NOT NULL,
+            red_team_enabled INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            started_at TEXT,
+            completed_at TEXT,
+            estimated_total_cost_usd REAL NOT NULL DEFAULT 0.0,
+            language TEXT NOT NULL DEFAULT 'en'
+        );
+        CREATE TABLE stages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            provider TEXT, model TEXT, status TEXT NOT NULL DEFAULT 'pending',
+            attempt INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0, estimated_cost_usd REAL NOT NULL DEFAULT 0.0,
+            error TEXT, started_at TEXT, completed_at TEXT
+        );
+        CREATE TABLE artifacts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, stage_id INTEGER NOT NULL,
+            artifact_type TEXT NOT NULL, text_content TEXT NOT NULL, created_at TEXT NOT NULL
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO runs (id, question, context, profile, red_team_enabled, status, "
+        "created_at, estimated_total_cost_usd, language) "
+        "VALUES ('old1', 'Old question?', NULL, 'economy', 0, 'succeeded', "
+        "'2025-01-01T00:00:00+00:00', 0.0123, 'en')"
+    )
+    conn.commit()
+    conn.close()
+
+    repo = Repository(db_path)
+    run = repo.get_run("old1")
+    assert run.question == "Old question?"
+    assert run.status == "succeeded"
+    assert run.max_run_cost_usd is None  # additive migration, not an invented default
+    assert abs(run.estimated_total_cost_usd - 0.0123) < 1e-9
+
+    # Still fully writable through every existing code path.
+    repo.update_run_budget("old1", "5.00")
+    assert repo.get_run("old1").max_run_cost_usd == "5.00"
+
+
 def test_stage_cost_accumulates_across_two_failed_attempts(tmp_path):
     repo = Repository(tmp_path / "db.sqlite3")
     repo.insert_run("run1", question="Q?", context=None, profile="economy", red_team_enabled=False)

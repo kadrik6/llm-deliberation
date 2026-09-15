@@ -3,9 +3,17 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
+from decimal import Decimal
 from pathlib import Path
 
+from llm_deliberation import readiness
 from llm_deliberation.config import PROFILES, Settings, default_red_team_enabled
+from llm_deliberation.cost_budget import (
+    BudgetExceededError,
+    RunBudgetGuard,
+    default_budget_from_float,
+    parse_budget_usd,
+)
 from llm_deliberation.orchestrator import (
     ALL_STAGE_NAMES,
     SKIPPABLE_STAGE_NAMES,
@@ -14,6 +22,7 @@ from llm_deliberation.orchestrator import (
 )
 from llm_deliberation.prompts import SUPPORTED_LANGUAGES
 from llm_deliberation.providers import ProviderGenerationError
+from llm_deliberation.readiness import ReadinessReport
 from llm_deliberation.store import DEFAULT_DB_PATH, Repository, RunRecord, utc_now_iso
 from llm_deliberation.types import ModelResponse, RunResult, Usage
 
@@ -75,6 +84,7 @@ class DeliberationService:
         red_team_enabled: bool | None = None,
         context: str | None = None,
         language: str = "en",
+        max_run_cost_usd: str | None = None,
     ) -> str:
         if profile not in PROFILES:
             valid = ", ".join(sorted(PROFILES))
@@ -90,6 +100,10 @@ class DeliberationService:
         if language not in SUPPORTED_LANGUAGES:
             valid = ", ".join(sorted(SUPPORTED_LANGUAGES))
             raise ValueError(f"Unknown language '{language}'. Choose one of: {valid}")
+        # Raises InvalidBudgetError (a ValueError) for a non-empty but
+        # non-positive/unparsable value; None/empty means "no cap", the
+        # exact pre-budget-feature behavior -- see cost_budget.parse_budget_usd.
+        budget = parse_budget_usd(max_run_cost_usd)
 
         enabled = default_red_team_enabled() if red_team_enabled is None else red_team_enabled
 
@@ -101,12 +115,32 @@ class DeliberationService:
             profile=profile,
             red_team_enabled=enabled,
             language=language,
+            max_run_cost_usd=str(budget) if budget is not None else None,
         )
         for name in ALL_STAGE_NAMES:
             if name == "red_team" and not enabled:
                 continue
             self.repo.insert_stage(run_id, name)
         return run_id
+
+    def update_run_budget(self, run_id: str, max_run_cost_usd: str | None) -> None:
+        """Change a run's stored budget cap -- the "Increase budget" action
+        shown once a run is blocked with failure_reason="run_budget_exceeded"
+        (see _execute). Does not itself resume the run; the caller still
+        calls resume_run() separately, keeping the two actions explicit.
+        """
+        budget = parse_budget_usd(max_run_cost_usd)
+        self.repo.update_run_budget(run_id, str(budget) if budget is not None else None)
+
+    def check_readiness(
+        self, profile: str, red_team_enabled: bool, *, force: bool = False
+    ) -> ReadinessReport:
+        """Provider readiness preflight for a prospective or existing run's
+        configuration -- see readiness.py. Never creates a run, never spends
+        beyond the (free, non-generation) readiness calls themselves.
+        """
+        settings = Settings.load(profile_override=profile, red_team_override=red_team_enabled)
+        return readiness.check_run_readiness(settings, red_team_enabled=red_team_enabled, force=force)
 
     def get_run(self, run_id: str) -> RunRecord:
         return self.repo.get_run_full(run_id)
@@ -258,6 +292,18 @@ class DeliberationService:
         texts: dict[str, str] = {}
         run_failed = False
 
+        # None (no cap) reproduces exactly the pre-budget-feature behavior:
+        # every check() call below becomes a no-op (see RunBudgetGuard).
+        # spent_usd starts from whatever this run has already durably spent
+        # (0.0 for a fresh run; the real prior total for a resume/retry), so
+        # a resumed run correctly continues counting against the same cap
+        # rather than resetting it.
+        budget_usd = Decimal(run.max_run_cost_usd) if run.max_run_cost_usd else None
+        budget_guard = RunBudgetGuard(
+            budget_usd=budget_usd,
+            spent_usd=default_budget_from_float(self.repo.sum_stage_costs(run_id)),
+        )
+
         for wave in WAVES:
             wave_stage_names = [name for name in wave if name in stages_by_name]
             if not wave_stage_names:
@@ -281,7 +327,37 @@ class DeliberationService:
             if not pending_names:
                 continue
 
+            # Budget admission -- before EACH new paid provider request, not
+            # just once per run (see Section 8 of the task brief). This
+            # wave's stages are the next requests about to be dispatched;
+            # each is checked in stage order against the run's already-spent
+            # total plus every other stage in this same wave already
+            # admitted ahead of it (`reserved`), so two expensive stages in
+            # one wave cannot both slip through when only one actually fits.
+            # A blocked stage is marked failed with the typed reason
+            # run_budget_exceeded via the *existing* mark_stage_failed path
+            # -- reusing exactly the same resume/retry/skip machinery any
+            # other stage failure already has (see run_detail's "Resume run"
+            # / skip buttons), with zero provider calls made for it.
+            admitted_names: list[str] = []
+            reserved = Decimal(0)
             for name in pending_names:
+                stage = stages_by_name[name]
+                upper_bound = orchestrator.stage_upper_bound_cost(
+                    name, effective_question, texts, language=run.language
+                )
+                try:
+                    budget_guard.check(reserved + upper_bound)
+                except BudgetExceededError as budget_exc:
+                    self.repo.mark_stage_failed(
+                        stage.id, error=str(budget_exc), failure_reason="run_budget_exceeded"
+                    )
+                    run_failed = True
+                    continue
+                reserved += upper_bound
+                admitted_names.append(name)
+
+            for name in admitted_names:
                 self.repo.mark_stage_running(stages_by_name[name].id)
 
             results = await asyncio.gather(
@@ -289,13 +365,14 @@ class DeliberationService:
                     orchestrator.run_stage(
                         name, effective_question, texts,
                         gemini_mode=gemini_mode, language=run.language,
+                        budget_guard=budget_guard,
                     )
-                    for name in pending_names
+                    for name in admitted_names
                 ),
                 return_exceptions=True,
             )
 
-            for name, outcome in zip(pending_names, results):
+            for name, outcome in zip(admitted_names, results):
                 stage = stages_by_name[name]
                 if isinstance(outcome, BaseException):
                     if isinstance(outcome, ProviderGenerationError):
@@ -310,10 +387,20 @@ class DeliberationService:
                             estimated_cost_usd=outcome.estimated_cost_usd,
                             failure_reason=outcome.reason,
                         )
+                        if outcome.reason == "provider_error":
+                            # A genuine transport/API/config failure (not a
+                            # content-quality issue like truncation, and not
+                            # our own budget guard) -- drop any cached
+                            # "ready" result for this run's providers so the
+                            # next readiness check re-probes live rather than
+                            # trusting a now-possibly-stale cache entry (see
+                            # readiness.py, Section 5 of the task brief).
+                            readiness.invalidate_readiness_cache()
                     else:
                         self.repo.mark_stage_failed(
                             stage.id, error=str(outcome), failure_reason="provider_error"
                         )
+                        readiness.invalidate_readiness_cache()
                     run_failed = True
                 elif outcome.incomplete_reason is not None:
                     # The provider call technically returned, but the
@@ -360,9 +447,15 @@ class DeliberationService:
                     )
                     texts[name] = outcome.text
 
-            self.repo.update_run(
-                run_id, estimated_total_cost_usd=self.repo.sum_stage_costs(run_id)
-            )
+            wave_total_cost = self.repo.sum_stage_costs(run_id)
+            self.repo.update_run(run_id, estimated_total_cost_usd=wave_total_cost)
+            # Re-anchor the guard to the authoritative persisted total after
+            # every stage in this wave has actually been durably recorded --
+            # corrects any drift from the live record_actual() calls made
+            # mid-stage (see providers.GeminiFallbackProvider.generate /
+            # orchestrator.run_stage's recovery path) rather than compounding
+            # it further on the next wave's admission check.
+            budget_guard.resync(default_budget_from_float(wave_total_cost))
 
             if run_failed:
                 break

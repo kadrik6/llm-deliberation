@@ -179,6 +179,23 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 
 .notice-error { background: var(--danger-bg); border-color: var(--danger); }
+.notice-warning { background: #fff7e6; }
+
+.readiness-panel {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.85rem 1rem;
+  margin-bottom: 1.25rem;
+}
+.readiness-list { list-style: none; padding: 0; margin: 0.5rem 0; }
+.readiness-list li { padding: 0.2rem 0; }
+.readiness-detail { color: var(--text-muted); font-size: 0.85rem; display: block; }
+.readiness-ready strong::after { content: " \2713"; color: var(--success, #2e7d32); }
+
+.profile-cost-estimate { display: block; font-size: 0.8rem; color: var(--text-muted); }
+
+.budget input[type="number"] { width: 10rem; }
+.budget-update-form { margin-top: 0.5rem; display: flex; gap: 0.5rem; align-items: center; }
 
 .run-meta { margin-bottom: 1.5rem; }
 .question-text, .context-text { white-space: pre-wrap; }

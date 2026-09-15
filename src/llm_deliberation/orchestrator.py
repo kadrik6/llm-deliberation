@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+from decimal import Decimal
 
 from llm_deliberation import convergence, prompts
 from llm_deliberation.config import Settings
+from llm_deliberation.cost_budget import BudgetExceededError, RunBudgetGuard, estimate_max_call_cost_usd
 from llm_deliberation.providers import (
     AnthropicProvider,
     GeminiFallbackProvider,
     OpenAIProvider,
     Provider,
     ProviderGenerationError,
+    budget_exceeded_to_provider_error,
 )
 from llm_deliberation.types import ModelResponse
 
@@ -197,6 +200,33 @@ class DeliberationOrchestrator:
         )
         self.convergence = _build_convergence_provider(settings)
 
+    def stage_upper_bound_cost(
+        self, stage: str, question: str, texts: dict[str, str], *, language: str = "en"
+    ) -> Decimal:
+        """Conservative upper-bound cost of this stage's *initial* call, from
+        the real prompt that would be sent -- used by service._execute to
+        decide, before dispatch, whether admitting this stage into its wave
+        would exceed the run budget (see cost_budget.py). For
+        GeminiFallbackProvider (red_team), the bound uses the most expensive
+        model in its configured chain, not just the preferred model: a
+        fallback can and does substitute a *different* model, so pricing
+        only the first one would understate the true worst case.
+        """
+        provider = getattr(self, STAGE_PROVIDER[stage])
+        prompt = _build_prompt(stage, question, texts)
+        system = prompts.base_system(language)
+        prompt_chars = len(system) + len(prompt)
+        if isinstance(provider, GeminiFallbackProvider):
+            return max(
+                estimate_max_call_cost_usd(
+                    model, prompt_chars=prompt_chars, max_output_tokens=provider.max_output_tokens
+                )
+                for model in provider.models
+            )
+        return estimate_max_call_cost_usd(
+            provider.model, prompt_chars=prompt_chars, max_output_tokens=provider.max_output_tokens
+        )
+
     async def run_stage(
         self,
         stage: str,
@@ -205,13 +235,23 @@ class DeliberationOrchestrator:
         *,
         gemini_mode: str = "chain",
         language: str = "en",
+        budget_guard: RunBudgetGuard | None = None,
     ) -> ModelResponse:
         provider = getattr(self, STAGE_PROVIDER[stage])
         prompt = _build_prompt(stage, question, texts)
         # gemini_mode only means anything to GeminiFallbackProvider (used by
         # the red_team stage's "Retry preferred model" vs "Retry with
         # fallback chain" UI actions); every other provider ignores it.
-        kwargs = {"mode": gemini_mode} if stage == "red_team" else {}
+        # budget_guard is passed through for the same reason: only
+        # GeminiFallbackProvider has its own internal multi-call retry/
+        # fallback loop that needs to re-check the budget between attempts
+        # (see providers.GeminiFallbackProvider.generate) -- every other
+        # provider here makes exactly one call, already admitted by
+        # service._execute's pre-dispatch check before this coroutine was
+        # even scheduled.
+        kwargs: dict[str, object] = {"mode": gemini_mode} if stage == "red_team" else {}
+        if stage == "red_team" and budget_guard is not None:
+            kwargs["budget_guard"] = budget_guard
         # language only affects the shared system prompt (see
         # prompts.base_system) -- the user's original question is always
         # passed through unchanged, never translated (see _build_prompt).
@@ -246,6 +286,32 @@ class DeliberationOrchestrator:
                 "outcome": "output_truncated",
                 "estimated_cost_usd": sunk_cost,
             }
+            if budget_guard is not None:
+                # The recovery call is itself a new paid request -- gated
+                # exactly like any other (see Section 9 of the task brief:
+                # truncation recovery must respect the same run budget).
+                # sunk_cost is recorded first so the check below sees the
+                # true accumulated total, including this stage's own
+                # already-spent (truncated, discarded) first attempt.
+                budget_guard.record_actual(Decimal(str(sunk_cost)))
+                recovery_prompt_chars = len(recovery_system) + len(prompt)
+                estimated_recovery_cost = estimate_max_call_cost_usd(
+                    initial_model,
+                    prompt_chars=recovery_prompt_chars,
+                    max_output_tokens=provider.max_output_tokens,
+                )
+                try:
+                    budget_guard.check(estimated_recovery_cost)
+                except BudgetExceededError as budget_exc:
+                    raise budget_exceeded_to_provider_error(
+                        budget_exc,
+                        requested_model=initial_model,
+                        attempts=1,
+                        attempt_log=[initial_attempt],
+                        fallback_used=False,
+                        fallback_reason=None,
+                        sunk_cost_usd=sunk_cost,
+                    ) from budget_exc
             try:
                 response = await _call(provider, system=recovery_system, prompt=prompt, **kwargs)
             except Exception as exc:

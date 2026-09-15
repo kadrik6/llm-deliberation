@@ -13,10 +13,24 @@
     <span>{{ "language_meta_label"|t }}: {{ ("language_display_" ~ record.language)|t }}</span>
     <span>{{ "red_team_meta_label"|t }}: {{ "red_team_on"|t if record.red_team_enabled else "red_team_off"|t }}</span>
     <span>{{ "elapsed_label"|t }}: {{ elapsed }}</span>
-    <span>{{ "cost_meta_label"|t }}: {{ cost }}</span>
+    <span>{{ "cost_meta_label"|t }}: {{ cost }}
+      {% if max_run_cost %} / {{ "budget_meta_label"|t }}: ${{ max_run_cost }}
+      {% else %} ({{ "no_budget_set"|t }}){% endif %}
+    </span>
   </div>
   {% if ui_lang != record.language %}
   <p class="language-mismatch-notice">{{ ("language_mismatch_run_" ~ record.language)|t }}</p>
+  {% endif %}
+  {% if budget_blocked %}
+  <div class="notice notice-warning">
+    <p>{{ "run_budget_exceeded_notice"|t }}</p>
+    <form method="post" action="/runs/{{ run_id }}/budget" class="inline-form budget-update-form">
+      <label for="max_run_cost" class="sr-only">{{ "increase_budget_label"|t }}</label>
+      <input type="number" id="max_run_cost" name="max_run_cost" min="0.01" step="0.01"
+        value="{{ max_run_cost or '' }}" placeholder="{{ 'max_run_cost_placeholder'|t }}">
+      <button type="submit">{{ "increase_budget_button"|t }}</button>
+    </form>
+  </div>
   {% endif %}
 </div>
 

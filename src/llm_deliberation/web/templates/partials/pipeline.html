@@ -74,7 +74,18 @@
               {%- if row.fallback_reason %} · {{ "reason_label"|t }}: {{ row.fallback_reason }}{% endif %}
             </span>
           {% endif %}
-          {% if row.skippable and row.fallback_chain_retry %}
+          {% if row.failure_reason == "run_budget_exceeded" %}
+            {# A retry of just this one stage would fail identically without
+               a budget increase -- the run-level "Resume run" button below
+               (plus the "Update budget" form near the top of the page) is
+               the correct action here, not a per-stage retry. A skippable
+               stage still offers Skip, since that remains meaningful. #}
+            {% if row.skippable %}
+            <form method="post" action="/runs/{{ run_id }}/stages/{{ row.name }}/skip" class="inline-form">
+              <button type="submit">{{ row.skip_label_key|t }}</button>
+            </form>
+            {% endif %}
+          {% elif row.skippable and row.fallback_chain_retry %}
             <form method="post" action="/runs/{{ run_id }}/stages/{{ row.name }}/retry" class="inline-form">
               <input type="hidden" name="mode" value="preferred_only">
               <button type="submit">{{ "retry_preferred_model"|t }}</button>

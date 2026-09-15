@@ -425,6 +425,75 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "attempt_outcome_succeeded": {"en": "succeeded", "et": "õnnestus"},
     "attempt_outcome_provider_error": {"en": "request failed", "et": "päring ebaõnnestus"},
 
+    # -- provider readiness (New Deliberation page) --------------------------
+    "readiness_heading": {"en": "Provider readiness", "et": "Teenusepakkujate valmisolek"},
+    "readiness_not_checked": {"en": "Not checked", "et": "Kontrollimata"},
+    "check_providers_button": {"en": "Check providers", "et": "Kontrolli teenusepakkujaid"},
+    "check_again_button": {"en": "Check again", "et": "Kontrolli uuesti"},
+    "readiness_checked_at_label": {"en": "Checked", "et": "Kontrollitud"},
+    # Status badges -- never claim a guarantee about later calls (see
+    # readiness.READY_DISCLAIMER, shown alongside "ready" results).
+    "readiness_status_ready": {"en": "ready", "et": "valmis"},
+    "readiness_status_unavailable": {"en": "not configured", "et": "seadistamata"},
+    "readiness_status_auth_error": {"en": "authentication failed", "et": "autentimine ebaõnnestus"},
+    "readiness_status_billing_error": {"en": "billing problem", "et": "arveldusprobleem"},
+    "readiness_status_permission_error": {"en": "access denied", "et": "juurdepääs keelatud"},
+    "readiness_status_model_unavailable": {"en": "model unavailable", "et": "mudel pole saadaval"},
+    "readiness_status_rate_limited": {"en": "rate-limited", "et": "piirmäär täitunud"},
+    "readiness_status_transient_error": {"en": "temporarily unavailable", "et": "ajutiselt pole saadaval"},
+    "readiness_status_unknown": {"en": "unexpected error", "et": "ootamatu viga"},
+    "readiness_disclaimer": {
+        "en": "A readiness check does not guarantee every later request will "
+              "succeed -- a real call can still fail from overload, a "
+              "timeout, or a transient provider error.",
+        "et": "Valmisoleku kontroll ei taga, et iga hilisem päring õnnestub -- "
+              "tegelik päring võib siiski ebaõnnestuda ülekoormuse, ajalõpu "
+              "või ajutise teenusepakkuja vea tõttu.",
+    },
+    "readiness_required_failed_notice": {
+        "en": "Deliberation cannot start: a required provider is not ready.",
+        "et": "Arutelu ei saa alustada: nõutav teenusepakkuja pole valmis.",
+    },
+    "gemini_unavailable_notice": {
+        "en": "Gemini red-team is currently unavailable.",
+        "et": "Punase meeskonna Gemini pole hetkel saadaval.",
+    },
+    "start_without_red_team_button": {
+        "en": "Start without red-team", "et": "Alusta ilma punase meeskonnata",
+    },
+
+    # -- cost budget (New Deliberation page + run detail) --------------------
+    "max_run_cost_label": {"en": "Max run cost (USD)", "et": "Maksimaalne kulu (USD)"},
+    "max_run_cost_helper": {
+        "en": "Optional safety limit. The app will stop before sending a "
+              "request that could push this run over the budget.",
+        "et": "Valikuline kulupiir. Rakendus peatub enne päringut, mis "
+              "võiks selle arutelu määratud eelarvet ületada.",
+    },
+    "max_run_cost_placeholder": {"en": "No limit", "et": "Piirang puudub"},
+    "invalid_budget_error": {
+        "en": "Max run cost must be a positive dollar amount.",
+        "et": "Maksimaalne kulu peab olema positiivne dollarisumma.",
+    },
+    "cost_estimate_label": {"en": "Estimated cost", "et": "Hinnanguline kulu"},
+    "cost_estimate_disclaimer": {
+        "en": "A rough estimate, not a guarantee -- actual cost depends on "
+              "how much the models actually write.",
+        "et": "Ligikaudne hinnang, mitte garantii -- tegelik kulu sõltub "
+              "sellest, kui palju mudelid tegelikult kirjutavad.",
+    },
+    "budget_meta_label": {"en": "Budget", "et": "Eelarve"},
+    "budget_spent_of_label": {"en": "spent", "et": "kulutatud"},
+    "no_budget_set": {"en": "no limit", "et": "piirang puudub"},
+    "run_budget_exceeded_notice": {
+        "en": "This run stopped before sending a request that could exceed "
+              "its cost budget.",
+        "et": "See arutelu peatus enne päringut, mis oleks võinud ületada "
+              "selle kulueelarve.",
+    },
+    "increase_budget_label": {"en": "New max run cost (USD)", "et": "Uus maksimaalne kulu (USD)"},
+    "increase_budget_button": {"en": "Update budget", "et": "Uuenda eelarvet"},
+
     # -- privacy disclosure (near Start Deliberation) ------------------------
     "privacy_disclosure": {
         "en": "Your question and context are sent to the selected AI providers "
