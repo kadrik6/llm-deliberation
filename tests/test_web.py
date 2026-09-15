@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 
 def _submit(client, *, question="What should we do?", profile="economy", red_team=False, context=""):
@@ -40,6 +41,111 @@ def test_run_detail_renders_persisted_stages_and_artifacts(client):
     assert "Independent analysis A" in body
     assert "Independent red-team" in body
     assert "analysis_a-output" in body  # inside the expandable <details> section
+
+
+def test_full_deliberation_trace_contains_every_artifact_and_stays_secondary(client):
+    """Point 8/9/12: the full trace (all raw artifacts + provider metadata)
+    must remain present and inspectable, but visually/structurally after
+    the analytical overview, under its own heading."""
+    response = _submit(client, question="Q?", red_team=True)
+    body = response.text
+
+    trace_heading_pos = body.index("Full deliberation trace")
+    assert '<section class="artifacts">' in body
+    # The trace heading comes after the analytical overview sections.
+    assert body.index("What changed?") < trace_heading_pos
+    assert body.index("You decide") < trace_heading_pos
+
+    for label in (
+        "Independent analysis A",
+        "Independent analysis B",
+        "Cross-critique A → B",
+        "Cross-critique B → A",
+        "Independent red-team",
+        "Revised candidate A",
+        "Revised candidate B",
+        "Convergence analysis (raw)",
+    ):
+        assert label in body
+    # Provider/model/cost metadata for at least one artifact is present.
+    assert "Fake" in body and "fake-model" in body
+
+    # The normal user can understand the result without opening any of
+    # these -- they are all inside collapsed <details>, not expanded by
+    # default (no "open" attribute).
+    trace_section = body[body.index('<section class="artifacts">'):]
+    assert "<details open" not in trace_section
+
+
+def test_raw_convergence_json_is_not_used_as_the_main_summary(client, service, fake_orchestrator_state):
+    fake_orchestrator_state["responses"] = {
+        "convergence_analysis": _convergence_response(
+            convergence="partial",
+            unresolved_disagreements=[
+                {
+                    "topic": "Data custody",
+                    "candidate_a_position": "a",
+                    "candidate_b_position": "b",
+                    "why_unresolved": "w",
+                    "decision_impact": "d",
+                }
+            ],
+        )
+    }
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    detail = client.get(f"/runs/{run_id}")
+    body = detail.text
+    # The raw JSON field name appears exactly once -- inside the collapsed
+    # raw artifact in the full trace -- never inside the human-readable
+    # dashboard sections built from the parsed object (those use the
+    # rendered label "Where they still disagree" instead).
+    raw_json_marker = "unresolved_disagreements"
+    assert body.count(raw_json_marker) == 1
+    raw_pos = body.index(raw_json_marker)
+    trace_pos = body.index('<section class="artifacts">')
+    assert raw_pos > trace_pos  # only inside the full trace, not above it
+
+
+def test_result_page_markup_has_no_duplicate_ids(client, service, fake_orchestrator_state):
+    fake_orchestrator_state["responses"] = {
+        "convergence_analysis": _convergence_response(
+            convergence="partial",
+            material_changes=[
+                {"candidate": "A", "before": "x", "after": "y", "material": True, "triggers": []}
+            ],
+            unresolved_disagreements=[
+                {
+                    "topic": "t",
+                    "candidate_a_position": "a",
+                    "candidate_b_position": "b",
+                    "why_unresolved": "w",
+                    "decision_impact": "d",
+                }
+            ],
+        )
+    }
+    response = _submit(client, question="Q?", red_team=True)
+    body = response.text
+
+    ids = re.findall(r'\bid="([^"]+)"', body)
+    assert len(ids) == len(set(ids)), f"duplicate id attributes found: {ids}"
+
+
+def test_no_new_stage_is_invoked_for_the_dashboard(service, fake_orchestrator_state):
+    """The dashboard is presentation-only: it must not add a new LLM stage
+    or change which stages run."""
+    import asyncio
+
+    from llm_deliberation.orchestrator import ALL_STAGE_NAMES
+
+    run_id = service.create_run("Q?", "economy", red_team_enabled=True)
+    record = asyncio.run(service.start_run(run_id))
+
+    assert record.status == "succeeded"
+    assert set(fake_orchestrator_state["log"]) == set(ALL_STAGE_NAMES)
+    assert len(fake_orchestrator_state["log"]) == len(ALL_STAGE_NAMES)
 
 
 def test_red_team_disabled_is_represented_correctly(client, service, fake_orchestrator_state):
@@ -407,6 +513,56 @@ def test_copy_final_answer_source_still_holds_raw_markdown(client, service, fake
     assert f'<pre id="final-answer-text" hidden>{_MARKDOWN_TEXT}</pre>' in body
 
 
+_SECTIONED_SYNTHESIS = (
+    "## Final conclusion\n\nShip the phased rollout.\n\n"
+    "## Why this is the strongest answer\n\nBoth analyses converged on it.\n\n"
+    "## Strongest argument against it\n\nRegulatory risk remains.\n\n"
+    "## Remaining uncertainty\n\nData residency law is unclear.\n\n"
+    "## What would change the recommendation\n\nNew regulatory guidance.\n"
+)
+
+
+def test_structured_synthesis_renders_prominent_headline_and_collapsible_rest(
+    client, service, fake_orchestrator_state
+):
+    fake_orchestrator_state["responses"] = {
+        "synthesis": {"model": "fake-model", "text": _SECTIONED_SYNTHESIS}
+    }
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    detail = client.get(f"/runs/{run_id}")
+    body = detail.text
+    assert '<p class="answer-lead-label">Final conclusion</p>' in body
+    assert "Ship the phased rollout." in body
+    # The remaining sections are present but tucked into collapsible
+    # <details>, each labeled with the model's own heading text.
+    for heading in (
+        "Why this is the strongest answer",
+        "Strongest argument against it",
+        "Remaining uncertainty",
+        "What would change the recommendation",
+    ):
+        assert f"<summary>{heading}</summary>" in body
+    # The prominent headline itself is not also duplicated as a <details>.
+    assert "<summary>Final conclusion</summary>" not in body
+    # Full raw text is still preserved verbatim for copying.
+    assert _SECTIONED_SYNTHESIS in body
+
+
+def test_unstructured_synthesis_falls_back_to_full_block_unsectioned(client, service):
+    # Default FakeOrchestrator text ("synthesis-output") has no headings --
+    # confirms the safe fallback path (today's behavior) is unchanged.
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    detail = client.get(f"/runs/{run_id}")
+    body = detail.text
+    assert "synthesis-output" in body
+    assert "answer-lead-label" not in body
+    assert "answer-details" not in body
+
+
 # -- Decision evolution (convergence_analysis) in the web UI -----------------
 
 
@@ -456,14 +612,51 @@ def test_ui_renders_what_changed_correctly(client, service, fake_orchestrator_st
 
     detail = client.get(f"/runs/{run_id}")
     body = detail.text
-    assert "Decision evolution" in body
-    assert "Convergence: Partial" in body
+    assert "What changed?" in body
+    assert "Partial convergence" in body
     assert "Candidate A" in body
     assert "Vendor-hosted deployment preferred." in body
     assert "Customer-controlled deployment preferred." in body
     assert "B raised a data custody risk." in body
     assert "Material change:</strong> Yes" in body
     assert "Material change:</strong> No" in body
+    # Material vs non-material changes are visually distinguishable in markup
+    # (not color-only -- the Yes/No text above is the accessible signal).
+    assert 'class="change-card is-material"' in body
+    assert 'class="change-card is-not-material"' in body
+
+
+def test_ui_groups_multiple_changes_for_the_same_candidate(client, service, fake_orchestrator_state):
+    fake_orchestrator_state["responses"] = {
+        "convergence_analysis": _convergence_response(
+            convergence="partial",
+            material_changes=[
+                {
+                    "candidate": "A",
+                    "before": "Prefers X.",
+                    "after": "Prefers Y.",
+                    "material": True,
+                    "triggers": [],
+                },
+                {
+                    "candidate": "A",
+                    "before": "Timeline: 3 months.",
+                    "after": "Timeline: 6 months.",
+                    "material": True,
+                    "triggers": [],
+                },
+            ],
+        )
+    }
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    detail = client.get(f"/runs/{run_id}")
+    body = detail.text
+    # "Candidate A" is grouped once as a heading, not repeated per change.
+    assert body.count("Candidate A") == 1
+    assert "Prefers Y." in body
+    assert "Timeline: 6 months." in body
 
 
 def test_ui_renders_unresolved_disagreements_correctly(client, service, fake_orchestrator_state):
@@ -488,10 +681,14 @@ def test_ui_renders_unresolved_disagreements_correctly(client, service, fake_orc
     body = detail.text
     assert "Where they still disagree" in body
     assert "Data custody" in body
+    assert "Candidate A" in body and "Candidate B" in body
     assert "Customer-controlled deployment preferred." in body
     assert "Vendor-hosted processing acceptable with safeguards." in body
     assert "Depends on regulatory posture" in body
     assert "Affects contract structure and cost." in body
+    # Both positions render inside the responsive comparison grid, not a
+    # winner/loser framing.
+    assert '<div class="disagreement-positions">' in body
 
 
 def test_ui_renders_agreements_unknowns_and_human_judgement(client, service, fake_orchestrator_state):
@@ -520,10 +717,13 @@ def test_ui_renders_agreements_unknowns_and_human_judgement(client, service, fak
     body = detail.text
     assert "Agreements reached" in body
     assert "Rollout pace" in body
-    assert "Remaining unknowns" in body
+    assert "What should you find out next?" in body
     assert "Data residency law" in body
-    assert "Human judgement required" in body
+    assert "Determines legal custody model." in body  # why_it_matters
+    assert "Jurisdiction analysis." in body  # evidence_needed
+    assert "You decide" in body
     assert "Risk tolerance for vendor lock-in" in body
+    assert "A values tradeoff." in body
 
 
 def test_ui_shows_no_material_changes_and_no_disagreements_explicitly(
@@ -535,9 +735,127 @@ def test_ui_shows_no_material_changes_and_no_disagreements_explicitly(
 
     detail = client.get(f"/runs/{run_id}")
     body = detail.text
-    assert "Convergence: Converged" in body
+    assert "Full convergence" in body
     assert "No material position changes were identified." in body
-    assert "No unresolved disagreements were identified." in body
+    assert "No material disagreements remain." in body
+    assert "No shared agreements were identified." in body
+    assert "No outstanding unknowns were identified." in body
+    assert "No issues were flagged as requiring human judgement." in body
+
+
+def test_decision_snapshot_shows_correct_counts_for_partial_convergence(
+    client, service, fake_orchestrator_state
+):
+    fake_orchestrator_state["responses"] = {
+        "convergence_analysis": _convergence_response(
+            convergence="partial",
+            material_changes=[
+                {"candidate": "A", "before": "x", "after": "y", "material": True, "triggers": []},
+                {"candidate": "B", "before": "x", "after": "x", "material": False, "triggers": []},
+            ],
+            unresolved_disagreements=[
+                {
+                    "topic": "t1",
+                    "candidate_a_position": "a",
+                    "candidate_b_position": "b",
+                    "why_unresolved": "w",
+                    "decision_impact": "d",
+                }
+            ]
+            * 3,
+            remaining_unknowns=[
+                {"unknown": "u", "why_it_matters": "m", "evidence_needed": "e"}
+            ]
+            * 5,
+            human_judgement_required=[
+                {"issue": "i", "why_models_cannot_resolve_it": "r"}
+            ]
+            * 3,
+        )
+    }
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    detail = client.get(f"/runs/{run_id}")
+    body = detail.text
+    assert "Partial convergence" in body
+    # Only the ONE material:true change counts as a material change, not
+    # both list entries.
+    assert "<strong>1</strong> material change" in body
+    assert "<strong>3</strong> unresolved disagreement" in body
+    assert "<strong>5</strong> missing fact" in body
+    assert "<strong>3</strong> human judgement item" in body
+
+
+def test_decision_snapshot_full_convergence_shows_no_disagreement_warning(
+    client, service, fake_orchestrator_state
+):
+    fake_orchestrator_state["responses"] = {
+        "convergence_analysis": _convergence_response(convergence="converged")
+    }
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    detail = client.get(f"/runs/{run_id}")
+    body = detail.text
+    assert "Full convergence" in body
+    assert "<strong>0</strong> unresolved disagreement" in body
+    assert "No material disagreements remain." in body
+
+
+def test_decision_snapshot_diverged_renders_correctly(client, service, fake_orchestrator_state):
+    fake_orchestrator_state["responses"] = {
+        "convergence_analysis": _convergence_response(convergence="diverged")
+    }
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    detail = client.get(f"/runs/{run_id}")
+    body = detail.text
+    assert "Diverged" in body
+    assert 'class="convergence-badge convergence-diverged"' in body
+
+
+def test_decision_snapshot_insufficient_information_renders_correctly(
+    client, service, fake_orchestrator_state
+):
+    fake_orchestrator_state["responses"] = {
+        "convergence_analysis": _convergence_response(convergence="insufficient_information")
+    }
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    detail = client.get(f"/runs/{run_id}")
+    body = detail.text
+    assert "Insufficient information" in body
+    assert 'class="convergence-badge convergence-insufficient-information"' in body
+
+
+def test_decision_snapshot_degrades_gracefully_when_convergence_missing(
+    client, service, fake_orchestrator_state
+):
+    fake_orchestrator_state["fail"] = {"convergence_analysis"}
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+    stage_id = next(
+        s.id for s in service.get_run(run_id).stages if s.name == "convergence_analysis"
+    )
+    import asyncio
+
+    asyncio.run(service.skip_stage(run_id, stage_id))
+
+    detail = client.get(f"/runs/{run_id}")
+    body = detail.text
+    assert "Convergence analysis unavailable" in body
+    assert "Change/convergence analysis unavailable for this run." in body
+    # No fabricated counts, and none of the five analytical sections (which
+    # would have nothing real to show) render at all.
+    assert "material change" not in body
+    assert "What changed?" not in body
+    assert "Where they still disagree" not in body
+    assert "You decide" not in body
+    # The rest of the page (full trace, synthesis) is unaffected.
+    assert "Full deliberation trace" in body
 
 
 def test_failed_convergence_analysis_offers_retry_and_skip(client, service, fake_orchestrator_state):

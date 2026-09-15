@@ -320,6 +320,14 @@ result (not free-form prose):
 - **issues flagged as requiring human judgement** rather than more
   analysis.
 
+In the web UI, a completed run's result page separates recommendation,
+position changes, unresolved disagreement, remaining unknowns, and human
+judgement so users can inspect not only what the system concluded, but
+how the deliberation evolved -- with the full stage-by-stage trace still
+available, one click away, for anyone who wants to audit it. This is a
+presentation change only: the underlying structured artifact and every
+other stage's raw text are unchanged.
+
 **This is model-generated analytical metadata, not proof of causality or
 correctness.** The analyst is the same kind of model as every other
 stage, asked a narrower question -- it can miss a real change, flag a

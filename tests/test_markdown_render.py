@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from markupsafe import Markup
 
-from llm_deliberation.web.markdown_render import render_markdown_safe
+from llm_deliberation.web.markdown_render import render_markdown_safe, split_synthesis_sections
 
 
 def test_empty_and_none_render_to_empty_markup():
@@ -150,3 +150,65 @@ def test_id_attribute_never_appears():
     html = render_markdown_safe('<h2 id="injected">Section</h2>')
     assert "id=" not in html
     assert "<h2>Section</h2>" in html
+
+
+# -- split_synthesis_sections ------------------------------------------
+
+
+def test_split_returns_none_with_no_headings():
+    html = render_markdown_safe("Just a plain paragraph, no structure.")
+    assert split_synthesis_sections(html) is None
+
+
+def test_split_returns_none_with_only_one_heading():
+    html = render_markdown_safe("## Only one heading\n\nSome text.")
+    assert split_synthesis_sections(html) is None
+
+
+def test_split_returns_sections_with_two_or_more_same_level_headings():
+    text = (
+        "## Final conclusion\n\nDo X.\n\n"
+        "## Why\n\nBecause Y.\n\n"
+        "## Risk\n\nZ could happen.\n"
+    )
+    html = render_markdown_safe(text)
+    sections = split_synthesis_sections(html)
+    assert sections is not None
+    assert [heading for heading, _ in sections] == ["Final conclusion", "Why", "Risk"]
+    assert "<p>Do X.</p>" in sections[0][1]
+    assert "<p>Because Y.</p>" in sections[1][1]
+    assert "<p>Z could happen.</p>" in sections[2][1]
+
+
+def test_split_only_splits_on_the_first_heading_level_seen():
+    # An h3 nested under an h2 is content, not a new top-level split point.
+    text = "## Section A\n\n### Sub A1\n\ntext\n\n## Section B\n\ntext2"
+    html = render_markdown_safe(text)
+    sections = split_synthesis_sections(html)
+    assert [heading for heading, _ in sections] == ["Section A", "Section B"]
+    assert "<h3>Sub A1</h3>" in sections[0][1]
+
+
+def test_split_returns_markup_not_plain_strings():
+    text = "## A\n\ntext\n\n## B\n\ntext2"
+    html = render_markdown_safe(text)
+    sections = split_synthesis_sections(html)
+    for _, body in sections:
+        assert isinstance(body, Markup)
+
+
+def test_split_strips_inline_tags_from_heading_text():
+    text = "## **Bold** heading\n\ntext\n\n## Plain\n\ntext2"
+    html = render_markdown_safe(text)
+    sections = split_synthesis_sections(html)
+    assert sections[0][0] == "Bold heading"  # <strong> tags stripped from label
+
+
+def test_split_captures_leading_content_before_first_heading():
+    text = "Intro line before any heading.\n\n## First\n\na\n\n## Second\n\nb"
+    html = render_markdown_safe(text)
+    sections = split_synthesis_sections(html)
+    assert sections[0][0] == ""  # no heading label for the leading content
+    assert "Intro line before any heading." in sections[0][1]
+    assert sections[1][0] == "First"
+    assert sections[2][0] == "Second"

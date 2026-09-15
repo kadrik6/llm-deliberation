@@ -1,10 +1,60 @@
 <section class="final-answer">
   <h2>Final answer</h2>
+
+  {% set convergence_labels = {
+    "converged": "Full convergence",
+    "partial": "Partial convergence",
+    "diverged": "Diverged",
+    "insufficient_information": "Insufficient information",
+  } %}
+  <div class="decision-snapshot">
+    {% if evolution is none %}
+      <p class="convergence-badge convergence-unavailable">Convergence analysis unavailable</p>
+      <p class="stage-note">Change/convergence analysis unavailable for this run.</p>
+    {% else %}
+      <p class="convergence-badge convergence-{{ evolution.convergence|replace('_', '-') }}">
+        {{ convergence_labels.get(evolution.convergence, evolution.convergence|replace('_', ' ')|capitalize) }}
+      </p>
+      <ul class="snapshot-counts">
+        {% set material_count = evolution.material_changes|selectattr("material")|list|length %}
+        <li><strong>{{ material_count }}</strong> material change{{ "s" if material_count != 1 else "" }}</li>
+        {% set disagreement_count = evolution.unresolved_disagreements|length %}
+        <li><strong>{{ disagreement_count }}</strong> unresolved disagreement{{ "s" if disagreement_count != 1 else "" }}</li>
+        {% set unknown_count = evolution.remaining_unknowns|length %}
+        <li><strong>{{ unknown_count }}</strong> missing fact{{ "s" if unknown_count != 1 else "" }}</li>
+        {% set judgement_count = evolution.human_judgement_required|length %}
+        <li><strong>{{ judgement_count }}</strong> human judgement item{{ "s" if judgement_count != 1 else "" }}</li>
+      </ul>
+    {% endif %}
+  </div>
+
   <div class="answer-actions">
     <button type="button" id="copy-answer">Copy final answer</button>
     <a href="/runs/{{ record.id }}/export" download>Export Markdown</a>
   </div>
-  <div class="answer-text markdown-body">{{ result.synthesis.text|render_markdown }}</div>
+
+  {% set rendered_answer = result.synthesis.text|render_markdown %}
+  {% set sections = rendered_answer|split_sections %}
+  {% if sections %}
+    {% set first_heading, first_body = sections[0] %}
+    <div class="answer-text markdown-body">
+      {% if first_heading %}<p class="answer-lead-label">{{ first_heading }}</p>{% endif %}
+      {{ first_body }}
+    </div>
+    {% if sections|length > 1 %}
+      <div class="answer-details">
+        {% for heading, body in sections[1:] %}
+          <details>
+            <summary>{{ heading }}</summary>
+            <div class="markdown-body">{{ body }}</div>
+          </details>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% else %}
+    <div class="answer-text markdown-body">{{ rendered_answer }}</div>
+  {% endif %}
+
   <!-- Raw Markdown, hidden: the copy button reads this element's
        textContent so "Copy final answer" keeps copying the original
        Markdown text, not the rendered HTML. -->
@@ -20,6 +70,7 @@
 {% include "partials/convergence_summary.html" %}
 
 <section class="artifacts">
+  <h2>Full deliberation trace</h2>
   {% for name, title in artifact_sections %}
     {% set artifact = artifacts.get(name) %}
     {% if artifact %}

@@ -362,23 +362,29 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   margin: 0.75rem 0;
 }
 
-/* Decision evolution: the convergence_analysis summary shown right after
-   the final answer (see partials/convergence_summary.html). Deliberately
-   plain -- restrained bordered blocks reusing the same tokens as
-   .stage-group/.final-answer, not a "wall of cards". */
-.decision-evolution {
+/* Decision snapshot: compact convergence badge + counts, immediately below
+   the "Final answer" heading (see partials/result.html). Answers "did they
+   converge / what's the shape of the disagreement" at a glance, entirely
+   from already-persisted structured data -- no new inference here. */
+.decision-snapshot {
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--surface);
-  padding: 1.25rem 1.4rem;
-  margin-bottom: 1.5rem;
+  background: var(--bg);
+  padding: 0.9rem 1.1rem;
+  margin-bottom: 1.1rem;
 }
 
-.decision-evolution h3 { margin-top: 1.1rem; }
-.decision-evolution h3:first-of-type { margin-top: 0.25rem; }
-
-.decision-evolution ul { margin: 0 0 1em; padding-left: 1.4em; }
-.decision-evolution li { margin: 0.25em 0; }
+.snapshot-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+.snapshot-counts strong { color: var(--text); }
 
 .convergence-badge {
   display: inline-block;
@@ -386,12 +392,58 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   border-radius: 999px;
   font-size: 0.85rem;
   font-weight: 600;
-  margin: 0 0 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  margin: 0 0 0.6rem;
 }
 .convergence-badge.convergence-converged { background: #e1efe9; color: var(--ok); }
 .convergence-badge.convergence-partial { background: #fbe9cf; color: var(--running); }
 .convergence-badge.convergence-diverged { background: var(--danger-bg); color: var(--danger); }
-.convergence-badge.convergence-insufficient-information { background: #eee; color: var(--text-muted); }
+.convergence-badge.convergence-insufficient-information,
+.convergence-badge.convergence-unavailable { background: #eee; color: var(--text-muted); }
+
+/* Final-answer headline + collapsible remainder (see split_synthesis_sections
+   in web/markdown_render.py -- only used when the structure is confidently
+   detected; otherwise the full block renders exactly as before). */
+.answer-lead-label {
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin: 0 0 0.4rem;
+}
+.answer-details {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.answer-details details { padding: 0.5rem 0.9rem; }
+
+/* Shared bordered-section look for the analytical overview blocks (What
+   changed / Where they still disagree / Agreements / Remaining unknowns /
+   You decide) -- same tokens as .stage-group/.final-answer, deliberately
+   plain rather than a "wall of cards". */
+.what-changed, .disagreement-map, .agreements, .remaining-unknowns, .human-judgement {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 1.25rem 1.4rem;
+  margin-bottom: 1.5rem;
+}
+
+.what-changed ul, .agreements ul, .remaining-unknowns ul, .human-judgement ul {
+  margin: 0;
+  padding-left: 1.4em;
+}
+.what-changed li, .agreements li, .human-judgement li { margin: 0.25em 0; }
+
+.section-intro { color: var(--text-muted); font-size: 0.9rem; margin: 0 0 0.75rem; }
+
+.candidate-changes { margin-bottom: 1rem; }
+.candidate-changes:last-child { margin-bottom: 0; }
+.change-candidate { font-weight: 600; margin: 0 0 0.5rem; }
 
 .change-card, .disagreement-card {
   border: 1px solid var(--border);
@@ -400,8 +452,74 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   margin-bottom: 0.6rem;
   background: var(--bg);
 }
+.change-card:last-child, .disagreement-card:last-child { margin-bottom: 0; }
 .change-card p, .disagreement-card p { margin: 0.25rem 0; }
-.change-candidate, .disagreement-topic { font-weight: 600; margin-bottom: 0.35rem !important; }
+.disagreement-topic { font-weight: 600; margin-bottom: 0.5rem !important; }
+
+/* Material changes get a visible accent; non-material ones are muted --
+   the "Material change: Yes/No" text is always present too, so the
+   distinction is never color-only (see accessibility notes). */
+.change-card.is-material { border-left: 3px solid var(--accent); }
+.change-card.is-not-material { opacity: 0.72; }
+
+.change-positions {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 0.6rem;
+  align-items: start;
+  margin-bottom: 0.4rem;
+}
+.change-before p, .change-after p { margin: 0; }
+.change-arrow { color: var(--text-muted); font-size: 1.1rem; padding-top: 1.3rem; }
+.change-trigger, .change-material { margin: 0.3rem 0 0 !important; font-size: 0.9rem; }
+
+.change-position-label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  margin-bottom: 0.15rem;
+}
+
+.disagreement-positions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  margin-bottom: 0.4rem;
+}
+.disagreement-position p { margin: 0; }
+
+@media (max-width: 640px) {
+  .change-positions { grid-template-columns: 1fr; }
+  .change-arrow { display: none; }
+  .disagreement-positions { grid-template-columns: 1fr; }
+}
+
+/* Remaining-unknowns checklist: decorative only (empty box glyph via
+   ::before), never a real <input type=checkbox> -- there is nothing to
+   persist or toggle, and a real form control would wrongly imply there is. */
+.checklist { list-style: none; margin: 0; padding: 0; }
+.checklist li {
+  position: relative;
+  padding: 0.3rem 0 0.6rem 1.6rem;
+  margin-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+.checklist li:last-child { border-bottom: none; margin-bottom: 0; }
+.checklist li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.35rem;
+  width: 0.9rem;
+  height: 0.9rem;
+  border: 1.5px solid var(--text-muted);
+  border-radius: 3px;
+}
+.checklist-item { font-weight: 600; margin: 0 0 0.2rem; }
+.checklist-detail { color: var(--text-muted); font-size: 0.9rem; margin: 0.1rem 0; }
 
 .history-table {
   width: 100%;

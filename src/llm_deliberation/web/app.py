@@ -15,7 +15,7 @@ from llm_deliberation import convergence, report
 from llm_deliberation.config import default_profile, default_red_team_enabled
 from llm_deliberation.service import DeliberationService
 from llm_deliberation.store import RunRecord
-from llm_deliberation.web.markdown_render import render_markdown_safe
+from llm_deliberation.web.markdown_render import render_markdown_safe, split_synthesis_sections
 from llm_deliberation.web.presenter import (
     ARTIFACT_SECTIONS,
     PROFILE_BLURBS,
@@ -79,6 +79,12 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
     # module docstring): the stored artifact and Markdown export never go
     # through this -- only what a Jinja template chooses to pipe through it.
     templates.env.filters["render_markdown"] = render_markdown_safe
+    # Best-effort structural split of already-rendered synthesis HTML into
+    # a prominent section + collapsible detail sections. Returns None (no
+    # split) when the structure isn't confidently detected -- see
+    # split_synthesis_sections' docstring. Presentation reorganization only:
+    # it never infers meaning, just groups by existing heading boundaries.
+    templates.env.filters["split_sections"] = split_synthesis_sections
     # Fail loudly on a missing template variable instead of silently
     # rendering blank -- caught a real bug (missing run_id/status in the
     # run_detail context) during development.

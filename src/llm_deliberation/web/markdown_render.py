@@ -32,6 +32,8 @@ model text.
 
 from __future__ import annotations
 
+import re
+
 import markdown
 import nh3
 from markupsafe import Markup
@@ -93,3 +95,60 @@ def render_markdown_safe(text: str | None) -> Markup:
         link_rel=_LINK_REL,
     )
     return Markup(clean_html)
+
+
+_HEADING_RE = re.compile(r"<h([1-6])>(.*?)</h\1>", re.S)
+_TAG_RE = re.compile(r"<[^>]+>")
+
+# Below this many same-level top-level headings, splitting isn't confident
+# enough to be worth it -- see split_synthesis_sections' docstring.
+_MIN_HEADINGS_TO_SPLIT = 2
+
+
+def split_synthesis_sections(html: Markup | str) -> list[tuple[str, Markup]] | None:
+    """Best-effort split of already-sanitized synthesis HTML into sections,
+    for a prominent "headline" plus collapsible detail sections.
+
+    Deliberately conservative: this never guesses at section *meaning* (no
+    hardcoded "Strongest counterargument" style labels -- that would be
+    presentation-layer inference, and would misdescribe content if the
+    model's actual structure differs). It only looks for repeated heading
+    tags of the same level in output already sanitized to a small, fixed
+    tag vocabulary (only h1-h6, no attributes possible), which makes a
+    regex split safe here in a way generic HTML parsing wouldn't be.
+
+    Returns None -- "don't split" -- whenever the structure isn't clearly
+    present (fewer than _MIN_HEADINGS_TO_SPLIT headings at the first level
+    seen), so the caller falls back to rendering the full block exactly as
+    before. This is intentionally the common case for weaker models or
+    unusual questions that don't follow the prompt's suggested structure;
+    only a confidently-detected structure changes the layout.
+
+    Returns a list of (heading_text, section_html) tuples on success. The
+    first tuple is meant to be shown prominently; the rest as collapsible
+    sections labeled with their own (real, unmodified) heading text.
+    """
+    html_str = str(html)
+    matches = list(_HEADING_RE.finditer(html_str))
+    if not matches:
+        return None
+
+    top_level = matches[0].group(1)
+    top_matches = [m for m in matches if m.group(1) == top_level]
+    if len(top_matches) < _MIN_HEADINGS_TO_SPLIT:
+        return None
+
+    sections: list[tuple[str, Markup]] = []
+
+    lead = html_str[: top_matches[0].start()].strip()
+    if lead:
+        sections.append(("", Markup(lead)))
+
+    for i, match in enumerate(top_matches):
+        heading_text = _TAG_RE.sub("", match.group(2)).strip()
+        start = match.end()
+        end = top_matches[i + 1].start() if i + 1 < len(top_matches) else len(html_str)
+        body = html_str[start:end].strip()
+        sections.append((heading_text, Markup(body)))
+
+    return sections
