@@ -324,9 +324,14 @@ already-succeeded, already-paid-for stages are never repeated. See
   SQLite, never included in Markdown exports, never sent to the browser,
   never logged.
 - The web UI has no authentication and is meant for `127.0.0.1` only.
-- Model output is rendered as escaped text, never as executed
-  HTML/Markdown, to avoid the browser UI acting on adversarial content in
-  a model's response.
+- Model output is rendered as sanitized HTML for readability (headings,
+  lists, code blocks, etc.), never as raw executed HTML: the web UI parses
+  it with a Markdown library, then strips anything not on a strict
+  tag/attribute allowlist (`nh3`) before display -- a model producing
+  adversarial HTML/script-like content cannot get it to execute. The
+  underlying stored artifact and the Markdown export are always the
+  original, unmodified text; only the browser view is transformed. See
+  [`docs/trust-model.md`](docs/trust-model.md).
 - No analytics, no telemetry, no external CDN dependencies in the web UI.
 - SQLite and Markdown files are unencrypted local files; anyone with
   filesystem access can read them.

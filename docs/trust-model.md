@@ -42,12 +42,23 @@ one person, one machine, running the CLI or the web UI for themselves.
 ## What is and isn't trusted internally
 
 - **Model output is treated as untrusted content**, not as trusted
-  application data. The web UI renders every stage's text through
-  Jinja2's default HTML autoescaping and never marks model output `|safe`
-  or converts it to rendered HTML/Markdown -- so a model producing
-  adversarial content (e.g. HTML/script-like text, whether from the model
-  itself or from a prompt-injection attempt embedded in your own question
-  or context) is displayed as inert text, not executed as markup.
+  application data. For browser display only, each stage's raw text is
+  converted to HTML by a Markdown parser and then passed through a strict
+  tag/attribute allowlist (`nh3.clean`, Python bindings for Mozilla's
+  actively-maintained Ammonia sanitizer) -- headings, emphasis, lists,
+  blockquotes, code, links, and tables render, and everything else
+  (`<script>`, `<iframe>`, `<style>`, `<form>` and its controls, event
+  handler attributes, `javascript:`/`data:` links, arbitrary raw HTML the
+  model or a prompt-injection attempt tried to include) is removed --
+  script/style/iframe/form and similar tags have their contents dropped
+  too, not just the tag -- before the result is ever marked safe for
+  Jinja to render (`src/llm_deliberation/web/markdown_render.py`). No
+  template
+  applies `|safe` to raw model text directly; the only place output is
+  trusted is that one function, after both the parse and the sanitize
+  step have already run. The canonical stored artifact (SQLite) and the
+  Markdown export are unaffected by this -- both keep the original text
+  exactly as the model produced it.
 - **API keys are trusted secrets, kept out of every other layer.** They
   are read once from the environment/`.env` (via `python-dotenv`) at the
   point a provider call is made, and are never written to the SQLite

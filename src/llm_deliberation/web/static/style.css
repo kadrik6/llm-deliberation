@@ -237,10 +237,7 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 
 .answer-text {
-  white-space: pre-wrap;
-  font-family: inherit;
   font-size: 1rem;
-  line-height: 1.65;
   margin: 0 0 1.25rem;
 }
 
@@ -258,13 +255,98 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   margin-bottom: 0.6rem;
 }
 
-.artifacts pre {
-  white-space: pre-wrap;
-  font-family: inherit;
+.artifacts .markdown-body {
   margin: 0.75rem 0;
 }
 
 .artifact-meta { color: var(--text-muted); font-size: 0.85rem; margin: 0; }
+
+/* Rendered Markdown (final answer + every artifact section) -- see
+   web/markdown_render.py. Sized to read as long-form prose, not to compete
+   with the page's own heading hierarchy (h1/h2 above are page chrome). */
+.markdown-body {
+  line-height: 1.65;
+}
+
+.markdown-body > *:first-child { margin-top: 0; }
+.markdown-body > *:last-child { margin-bottom: 0; }
+
+.markdown-body p { margin: 0 0 1em; }
+
+.markdown-body h1, .markdown-body h2, .markdown-body h3,
+.markdown-body h4, .markdown-body h5, .markdown-body h6 {
+  margin: 1.3em 0 0.5em;
+  line-height: 1.3;
+  font-weight: 600;
+}
+.markdown-body h1 { font-size: 1.15rem; }
+.markdown-body h2 { font-size: 1.05rem; }
+.markdown-body h3, .markdown-body h4,
+.markdown-body h5, .markdown-body h6 {
+  font-size: 1rem;
+  color: var(--text-muted);
+}
+
+.markdown-body ul, .markdown-body ol {
+  margin: 0 0 1em;
+  padding-left: 1.4em;
+}
+.markdown-body li { margin: 0.25em 0; }
+.markdown-body li > ul, .markdown-body li > ol { margin: 0.25em 0 0 0; }
+
+.markdown-body blockquote {
+  margin: 0 0 1em;
+  padding: 0.3em 1em;
+  border-left: 3px solid var(--border);
+  color: var(--text-muted);
+}
+
+.markdown-body code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+
+.markdown-body pre {
+  margin: 0 0 1em;
+  padding: 0.85em 1em;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.markdown-body pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.85em;
+}
+
+.markdown-body a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.markdown-body a:hover { text-decoration: none; }
+
+.markdown-body table {
+  display: block;
+  overflow-x: auto;
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 1em;
+  font-size: 0.9em;
+}
+.markdown-body th, .markdown-body td {
+  border: 1px solid var(--border);
+  padding: 0.4em 0.6em;
+  text-align: left;
+}
+.markdown-body th { background: var(--bg); font-weight: 600; }
 .artifact-fallback-note { color: var(--text-muted); font-size: 0.85rem; margin: 0.35rem 0 0; }
 
 .history-table {

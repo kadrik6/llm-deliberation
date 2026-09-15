@@ -281,3 +281,121 @@ def test_export_markdown_discloses_fallback(client, service, fake_orchestrator_s
     assert "Requested model: `gemini-3.8-flash`" in export.text
     assert "Fallback reason: HTTP 503 from Gemini (model is overloaded)" in export.text
     assert "Attempts (this try): 5" in export.text
+
+
+# -- Markdown rendering in the browser (storage/export stay raw) ------------
+
+_MARKDOWN_TEXT = (
+    "## Conclusion\n\n"
+    "This is the **recommended** approach, with some *caveats*.\n\n"
+    "- first point\n"
+    "- second point\n"
+)
+
+
+def test_stored_artifact_stays_raw_markdown_in_sqlite(service, fake_orchestrator_state):
+    fake_orchestrator_state["responses"] = {"synthesis": {"model": "fake-model", "text": _MARKDOWN_TEXT}}
+    run_id = service.create_run("Q?", "economy", red_team_enabled=False)
+    import asyncio
+
+    record = asyncio.run(service.start_run(run_id))
+    assert record.status == "succeeded"
+
+    stage = service.repo.get_stage(run_id, "synthesis")
+    assert stage.text == _MARKDOWN_TEXT  # byte-identical raw Markdown, not HTML
+
+    # A second, independent read from the repository confirms nothing about
+    # the stored row was mutated by having been displayed in the browser.
+    reread = service.repo.get_stage(run_id, "synthesis")
+    assert reread.text == _MARKDOWN_TEXT
+
+
+def test_markdown_export_still_contains_raw_markdown_syntax(client, service, fake_orchestrator_state):
+    fake_orchestrator_state["responses"] = {"synthesis": {"model": "fake-model", "text": _MARKDOWN_TEXT}}
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    export = client.get(f"/runs/{run_id}/export")
+    assert export.status_code == 200
+    assert _MARKDOWN_TEXT in export.text  # raw syntax, unrendered
+    assert "<h2>" not in export.text
+    assert "<strong>" not in export.text
+
+
+def test_browser_view_renders_markdown_as_html(client, service, fake_orchestrator_state):
+    fake_orchestrator_state["responses"] = {"synthesis": {"model": "fake-model", "text": _MARKDOWN_TEXT}}
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    detail = client.get(f"/runs/{run_id}")
+    body = detail.text
+    assert "<h2>Conclusion</h2>" in body
+    assert "<strong>recommended</strong>" in body
+    assert "<em>caveats</em>" in body
+    assert "<li>first point</li>" in body
+    # The visible rendered-answer div specifically must not contain raw
+    # Markdown syntax (the hidden copy-source <pre> legitimately does --
+    # that is checked separately in test_copy_final_answer_source_still_
+    # holds_raw_markdown).
+    import re
+
+    rendered_answer = re.search(
+        r'<div class="answer-text markdown-body">(.*?)</div>', body, re.S
+    ).group(1)
+    assert "## Conclusion" not in rendered_answer
+    assert "**recommended**" not in rendered_answer
+
+
+def test_unsafe_html_in_model_output_cannot_execute(client, service, fake_orchestrator_state):
+    import re
+
+    malicious = "Findings: <script>alert('xss')</script> and <img src=x onerror=\"alert(1)\">."
+    fake_orchestrator_state["responses"] = {"synthesis": {"model": "fake-model", "text": malicious}}
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    detail = client.get(f"/runs/{run_id}")
+    body = detail.text
+
+    # The page legitimately has exactly one <script> tag, for the static
+    # app.js asset -- none may originate from model output.
+    assert body.lower().count("<script") == 1
+    assert '<script src="/static/app.js">' in body
+
+    # The *rendered* answer (what actually becomes live markup in the DOM)
+    # must contain neither the script nor the <img onerror=...> tag.
+    rendered_answer = re.search(
+        r'<div class="answer-text markdown-body">(.*?)</div>', body, re.S
+    ).group(1)
+    assert "<script" not in rendered_answer.lower()
+    assert "<img" not in rendered_answer.lower()
+    assert "onerror" not in rendered_answer.lower()
+    # nh3 removes a stripped <script>'s contents too, not just the tag.
+    assert "alert('xss')" not in rendered_answer
+
+    # The hidden copy-source <pre> legitimately still contains the original
+    # text -- but Jinja's autoescaping renders it as inert HTML-entity text
+    # (e.g. &lt;script&gt;), never as a live tag.
+    assert "&lt;script&gt;" in body
+    assert "<script>alert" not in body  # never an unescaped, live tag
+
+    # Storage and export are untouched by the sanitizer -- the raw payload
+    # is still there as plain text data, just never rendered as markup.
+    stage = service.get_run(run_id)
+    synthesis_stage = next(s for s in stage.stages if s.name == "synthesis")
+    assert synthesis_stage.text == malicious
+    export = client.get(f"/runs/{run_id}/export")
+    assert malicious in export.text
+
+
+def test_copy_final_answer_source_still_holds_raw_markdown(client, service, fake_orchestrator_state):
+    fake_orchestrator_state["responses"] = {"synthesis": {"model": "fake-model", "text": _MARKDOWN_TEXT}}
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    detail = client.get(f"/runs/{run_id}")
+    body = detail.text
+    assert '<pre id="final-answer-text" hidden>' in body
+    # The exact raw Markdown text (the JS copy handler reads .textContent
+    # from this element) must be present, unrendered, inside it.
+    assert f'<pre id="final-answer-text" hidden>{_MARKDOWN_TEXT}</pre>' in body

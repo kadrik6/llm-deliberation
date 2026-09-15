@@ -15,6 +15,7 @@ from llm_deliberation import report
 from llm_deliberation.config import default_profile, default_red_team_enabled
 from llm_deliberation.service import DeliberationService
 from llm_deliberation.store import RunRecord
+from llm_deliberation.web.markdown_render import render_markdown_safe
 from llm_deliberation.web.presenter import (
     ARTIFACT_SECTIONS,
     PROFILE_BLURBS,
@@ -74,6 +75,10 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
 
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     templates.env.filters["fmt_datetime"] = format_datetime
+    # Browser-presentation-only Markdown rendering (see markdown_render.py's
+    # module docstring): the stored artifact and Markdown export never go
+    # through this -- only what a Jinja template chooses to pipe through it.
+    templates.env.filters["render_markdown"] = render_markdown_safe
     # Fail loudly on a missing template variable instead of silently
     # rendering blank -- caught a real bug (missing run_id/status in the
     # run_detail context) during development.
