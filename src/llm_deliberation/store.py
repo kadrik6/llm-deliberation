@@ -38,6 +38,15 @@ class StageRecord:
     fallback_reason: str | None = None
     model_attempts: int = 1
     attempt_log: list[dict] | None = None
+    # Typed classification of why a "failed" stage failed -- "empty_output" |
+    # "output_truncated" | "structured_output_invalid" | "provider_error" |
+    # None (never failed, or predates this column). Always None for a
+    # succeeded/skipped/pending/running stage. User-facing code (e.g. the
+    # deliberation-quality indicator) must branch on this, never on parsing
+    # the free-text `error` string. A stage created before this column
+    # existed has this as None even if it once failed -- a neutral legacy
+    # default, not an invented classification (see store._STAGE_MIGRATION_COLUMNS).
+    failure_reason: str | None = None
 
 
 @dataclass(slots=True)
@@ -95,6 +104,7 @@ CREATE TABLE IF NOT EXISTS stages (
     fallback_reason TEXT,
     model_attempts INTEGER NOT NULL DEFAULT 1,
     attempt_log TEXT,
+    failure_reason TEXT,
     UNIQUE(run_id, name)
 );
 
@@ -121,6 +131,7 @@ _STAGE_MIGRATION_COLUMNS: dict[str, str] = {
     "fallback_reason": "TEXT",
     "model_attempts": "INTEGER NOT NULL DEFAULT 1",
     "attempt_log": "TEXT",
+    "failure_reason": "TEXT",
 }
 
 # A run created before bilingual support existed gets "en" -- a stated,
@@ -322,6 +333,7 @@ class Repository:
             fallback_reason=row["fallback_reason"],
             model_attempts=row["model_attempts"],
             attempt_log=json.loads(attempt_log_raw) if attempt_log_raw else None,
+            failure_reason=row["failure_reason"],
         )
 
     def mark_stage_running(self, stage_id: int) -> None:
@@ -355,12 +367,21 @@ class Repository:
         if row is None:
             raise KeyError(f"Unknown stage_id: {stage_id}")
         run_id = row["run_id"]
+        # estimated_cost_usd accumulates (existing value + this attempt's
+        # cost) rather than overwriting: a stage that previously failed one
+        # or more paid attempts before eventually succeeding (via retry_stage,
+        # or the one bounded truncation-recovery retry -- see
+        # orchestrator.run_stage) must not have that earlier spend silently
+        # replaced/dropped from the run's cost total (see sum_stage_costs).
+        # reset_stage() deliberately never clears this column, so it is safe
+        # to add to here.
         self._conn.execute(
             "UPDATE stages SET status = 'succeeded', provider = ?, model = ?, "
-            "input_tokens = ?, output_tokens = ?, estimated_cost_usd = ?, "
+            "input_tokens = ?, output_tokens = ?, "
+            "estimated_cost_usd = estimated_cost_usd + ?, "
             "requested_model = ?, fallback_used = ?, fallback_reason = ?, "
             "model_attempts = ?, attempt_log = ?, "
-            "error = NULL, completed_at = ? WHERE id = ?",
+            "error = NULL, failure_reason = NULL, completed_at = ? WHERE id = ?",
             (
                 provider,
                 model,
@@ -394,11 +415,17 @@ class Repository:
         model_attempts: int = 1,
         attempt_log: list[dict] | None = None,
         estimated_cost_usd: float = 0.0,
+        failure_reason: str | None = None,
     ) -> None:
+        # estimated_cost_usd accumulates -- see the matching note in
+        # mark_stage_succeeded. A stage retried multiple times, each
+        # incurring some paid-but-unusable cost before finally succeeding or
+        # being abandoned, keeps every attempt's spend in the run total.
         self._conn.execute(
             "UPDATE stages SET status = 'failed', error = ?, completed_at = ?, "
             "requested_model = ?, fallback_used = ?, fallback_reason = ?, "
-            "model_attempts = ?, attempt_log = ?, estimated_cost_usd = ? "
+            "model_attempts = ?, attempt_log = ?, "
+            "estimated_cost_usd = estimated_cost_usd + ?, failure_reason = ? "
             "WHERE id = ?",
             (
                 error,
@@ -409,6 +436,7 @@ class Repository:
                 model_attempts,
                 json.dumps(attempt_log) if attempt_log is not None else None,
                 estimated_cost_usd,
+                failure_reason,
                 stage_id,
             ),
         )
@@ -422,16 +450,20 @@ class Repository:
         disabled red-team stage is treated).
         """
         self._conn.execute(
-            "UPDATE stages SET status = 'skipped', error = NULL, "
+            "UPDATE stages SET status = 'skipped', error = NULL, failure_reason = NULL, "
             "fallback_reason = ?, completed_at = ? WHERE id = ?",
             (reason, utc_now_iso(), stage_id),
         )
         self._conn.commit()
 
     def reset_stage(self, stage_id: int) -> None:
+        # Deliberately does NOT touch estimated_cost_usd: any cost already
+        # incurred by a prior attempt of this stage must survive a retry (see
+        # mark_stage_succeeded/mark_stage_failed, which add to it rather than
+        # overwrite it).
         self._conn.execute(
-            "UPDATE stages SET status = 'pending', error = NULL, started_at = NULL, "
-            "completed_at = NULL WHERE id = ?",
+            "UPDATE stages SET status = 'pending', error = NULL, failure_reason = NULL, "
+            "started_at = NULL, completed_at = NULL WHERE id = ?",
             (stage_id,),
         )
         self._conn.commit()

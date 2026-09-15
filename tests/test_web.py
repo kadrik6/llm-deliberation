@@ -627,7 +627,7 @@ def test_ui_renders_what_changed_correctly(client, service, fake_orchestrator_st
     # Material vs non-material changes are visually distinguishable in markup
     # (not color-only -- the Yes/No text above is the accessible signal).
     assert 'class="change-card is-material"' in body
-    assert 'class="change-card is-not-material"' in body
+    assert 'class="change-card is-non-material"' in body
 
 
 def test_ui_groups_multiple_changes_for_the_same_candidate(client, service, fake_orchestrator_state):
@@ -1343,3 +1343,70 @@ def test_successful_run_live_behavior_and_rendering_are_unchanged(client, servic
     assert "Final answer" in body
     assert 'id="pipeline-container"' not in body
     assert 'id="pipeline-result"' not in body  # that id is failed-run-only
+
+
+# -- deliberation quality indicator + privacy disclosure --------------------
+# (Section 14, items 26-30)
+
+
+def test_quality_indicator_renders_complete_for_a_healthy_run(client, service):
+    response = _submit(client, question="Q?", red_team=True)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    body = client.get(f"/runs/{run_id}").text
+    assert "Deliberation quality" in body
+    assert "Complete" in body
+
+
+def test_quality_indicator_renders_incomplete_with_reasons(
+    client, service, fake_orchestrator_state
+):
+    fake_orchestrator_state["responses"] = {
+        "revision_a": {"incomplete_reason": "output_truncated"}
+    }
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    body = client.get(f"/runs/{run_id}").text
+    assert "Deliberation quality" in body
+    assert "Incomplete" in body
+    # The bullet names the affected artifact and that it was truncated, not
+    # just a raw error string.
+    assert "Revised candidate A" in body
+    assert "output truncated" in body
+
+
+def test_quality_indicator_renders_degraded_when_red_team_is_skipped(
+    client, service, fake_orchestrator_state
+):
+    fake_orchestrator_state["fail"] = {"red_team"}
+    response = _submit(client, question="Q?", red_team=True)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    client.post(f"/runs/{run_id}/stages/red_team/skip")
+    body = client.get(f"/runs/{run_id}").text
+
+    assert "Deliberation quality" in body
+    assert "Degraded" in body
+
+
+def test_quality_indicator_labels_render_in_estonian(client, service, fake_orchestrator_state):
+    fake_orchestrator_state["responses"] = {
+        "revision_a": {"incomplete_reason": "output_truncated"}
+    }
+    client.cookies.set("ui_lang", "et")
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    body = client.get(f"/runs/{run_id}").text
+    assert "Arutelu kvaliteet" in body
+    assert "Puudulik" in body
+
+
+def test_privacy_disclosure_renders_on_the_new_deliberation_form_in_both_ui_languages(client):
+    en_body = client.get("/").text
+    assert "sent to the selected AI providers" in en_body
+
+    client.cookies.set("ui_lang", "et")
+    et_body = client.get("/").text
+    assert "saadetakse töötlemiseks valitud" in et_body

@@ -30,6 +30,14 @@ class ModelResponse:
     fallback_reason: str | None = None
     model_attempts: int = 1
     attempt_log: list[dict] | None = None
+    # Set by a Provider when the response is empty or was cut off by an
+    # output-length/completion-state signal from the provider itself (see
+    # providers.py) -- "empty_output" | "output_truncated" | None. None means
+    # the provider reported a normal, complete response. This is populated
+    # even on an otherwise-"successful" call: a stage is only durably marked
+    # succeeded once this is confirmed None (see service.py), so paid-but-
+    # unusable output is never silently treated as a healthy artifact.
+    incomplete_reason: str | None = None
 
 
 @dataclass(slots=True)

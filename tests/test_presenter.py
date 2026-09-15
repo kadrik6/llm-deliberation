@@ -108,3 +108,111 @@ def test_disabled_stage_has_no_running_note():
     row = _row_for(presenter.build_pipeline(_run([])), "red_team")
     assert row["disabled"] is True
     assert row.get("running_note") is None
+
+
+# -- deliberation quality (Section 14, items 12-16) -------------------------
+
+_REQUIRED = presenter.REQUIRED_STAGE_ORDER
+
+
+def _usable_required_stages() -> list[StageRecord]:
+    return [_stage("succeeded", name=name, text=f"{name}-output") for name in _REQUIRED]
+
+
+def test_running_run_has_no_quality_yet():
+    stages = _usable_required_stages()
+    run = _run(stages, status="running")
+    assert presenter.compute_deliberation_quality(run) is None
+
+
+def test_complete_run_with_red_team_and_convergence_is_complete():
+    stages = _usable_required_stages() + [
+        _stage("succeeded", name="red_team", text="red-team-output"),
+        _stage("succeeded", name="convergence_analysis", text="{}"),
+    ]
+    run = _run(stages, status="succeeded")
+    run.red_team_enabled = True
+
+    quality = presenter.compute_deliberation_quality(run)
+
+    assert quality == {"level": "complete", "reasons": []}
+
+
+def test_red_team_disabled_from_the_start_is_not_degraded():
+    # No red_team stage row at all -- this is the normal, expected shape for
+    # a run created with red-team off, not a missing/failed evidence gap.
+    stages = _usable_required_stages() + [
+        _stage("succeeded", name="convergence_analysis", text="{}"),
+    ]
+    run = _run(stages, status="succeeded")
+    run.red_team_enabled = False
+
+    quality = presenter.compute_deliberation_quality(run)
+
+    assert quality["level"] == "complete"
+
+
+def test_configured_red_team_skipped_after_failure_is_degraded():
+    stages = _usable_required_stages() + [
+        _stage("skipped", name="red_team", error=None),
+        _stage("succeeded", name="convergence_analysis", text="{}"),
+    ]
+    run = _run(stages, status="succeeded")
+    run.red_team_enabled = True
+
+    quality = presenter.compute_deliberation_quality(run)
+
+    assert quality["level"] == "degraded"
+    assert any(r["stage"] == "red_team" for r in quality["reasons"])
+
+
+def test_skipped_convergence_analysis_is_degraded():
+    stages = _usable_required_stages() + [
+        _stage("succeeded", name="red_team", text="red-team-output"),
+        _stage("skipped", name="convergence_analysis"),
+    ]
+    run = _run(stages, status="succeeded")
+    run.red_team_enabled = True
+
+    quality = presenter.compute_deliberation_quality(run)
+
+    assert quality["level"] == "degraded"
+    assert any(r["stage"] == "convergence_analysis" for r in quality["reasons"])
+
+
+def test_missing_required_stage_is_incomplete():
+    stages = [s for s in _usable_required_stages() if s.name != "revision_a"]
+    stages.append(_stage("failed", name="revision_a", error="boom"))
+    run = _run(stages, status="failed")
+
+    quality = presenter.compute_deliberation_quality(run)
+
+    assert quality["level"] == "incomplete"
+    reasons_by_stage = {r["stage"]: r for r in quality["reasons"]}
+    assert reasons_by_stage["revision_a"]["kind"] == "unavailable"
+
+
+def test_truncated_required_stage_reports_truncated_kind():
+    stages = [s for s in _usable_required_stages() if s.name != "revision_b"]
+    stages.append(_stage("failed", name="revision_b", error="cut off", failure_reason="output_truncated"))
+    run = _run(stages, status="failed")
+
+    quality = presenter.compute_deliberation_quality(run)
+
+    assert quality["level"] == "incomplete"
+    reasons_by_stage = {r["stage"]: r for r in quality["reasons"]}
+    assert reasons_by_stage["revision_b"]["kind"] == "truncated"
+
+
+def test_succeeded_stage_with_empty_text_is_still_incomplete():
+    # Legacy-data safety net: a stage recorded as "succeeded" with empty
+    # text (predating this reliability pass, or any other gap) must never
+    # be counted as usable evidence.
+    stages = [s for s in _usable_required_stages() if s.name != "analysis_a"]
+    stages.append(_stage("succeeded", name="analysis_a", text="   "))
+    run = _run(stages, status="failed")
+
+    quality = presenter.compute_deliberation_quality(run)
+
+    assert quality["level"] == "incomplete"
+    assert any(r["stage"] == "analysis_a" for r in quality["reasons"])

@@ -6,7 +6,7 @@
       <div class="candidate-changes">
         <p class="change-candidate">{{ "candidate_label"|t }} {{ candidate }}</p>
         {% for change in changes %}
-          <div class="change-card {{ 'is-material' if change.material else 'is-not-material' }}">
+          <div class="change-card is-{{ change.change_status|replace('_', '-') }}">
             <div class="change-positions">
               <div class="change-before">
                 <span class="change-position-label">{{ "before_label"|t }}</span>
@@ -26,7 +26,7 @@
                 {%- endfor %}
               </p>
             {% endif %}
-            <p class="change-material"><strong>{{ "material_change_label"|t }}:</strong> {{ "yes_label"|t if change.material else "no_label"|t }}</p>
+            <p class="change-material"><strong>{{ "material_change_label"|t }}:</strong> {{ "yes_label"|t if change.change_status == "material" else ("no_label"|t if change.change_status == "non_material" else "unknown_evidence_label"|t) }}</p>
           </div>
         {% endfor %}
       </div>

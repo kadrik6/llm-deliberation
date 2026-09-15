@@ -488,7 +488,7 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
    the "Material change: Yes/No" text is always present too, so the
    distinction is never color-only (see accessibility notes). */
 .change-card.is-material { border-left: 3px solid var(--accent); }
-.change-card.is-not-material { opacity: 0.72; }
+.change-card.is-non-material { opacity: 0.72; }
 
 .change-positions {
   display: grid;
@@ -601,4 +601,53 @@ code {
   padding: 0.1rem 0.35rem;
   border-radius: 4px;
   font-size: 0.9em;
+}
+
+/* Deliberation quality indicator (see partials/quality_indicator.html) --
+   compact, text-first (not color-only), shown near the Decision Snapshot on
+   a succeeded run and near the pipeline on a failed one. */
+.quality-indicator {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  padding: 0.9rem 1.1rem;
+  margin-bottom: 1.1rem;
+}
+.quality-indicator-label {
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin: 0 0 0.3rem;
+}
+.quality-indicator-value {
+  font-size: 1rem;
+  font-weight: 700;
+  margin: 0 0 0.3rem;
+}
+.quality-indicator.quality-complete .quality-indicator-value { color: var(--ok); }
+.quality-indicator.quality-degraded .quality-indicator-value { color: var(--running); }
+.quality-indicator.quality-incomplete .quality-indicator-value { color: var(--danger); }
+.quality-indicator-reasons {
+  margin: 0.2rem 0 0.4rem;
+  padding-left: 1.2rem;
+  font-size: 0.88rem;
+  color: var(--text-muted);
+}
+.quality-indicator-note {
+  margin: 0.2rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.change-card.is-unknown { border-left: 3px dashed var(--running); opacity: 0.9; }
+
+.fallback-attempt-group { display: block; }
+.fallback-indicator { color: var(--text-muted); font-size: 0.8rem; margin: 0.15rem 0; }
+
+.privacy-disclosure {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin: 0.4rem 0 1rem;
 }

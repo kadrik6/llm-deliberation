@@ -277,9 +277,40 @@ class DeliberationService:
                             model_attempts=outcome.attempts,
                             attempt_log=outcome.attempt_log,
                             estimated_cost_usd=outcome.estimated_cost_usd,
+                            failure_reason=outcome.reason,
                         )
                     else:
-                        self.repo.mark_stage_failed(stage.id, error=str(outcome))
+                        self.repo.mark_stage_failed(
+                            stage.id, error=str(outcome), failure_reason="provider_error"
+                        )
+                    run_failed = True
+                elif outcome.incomplete_reason is not None:
+                    # The provider call technically returned, but the
+                    # artifact is empty or was truncated by an output-length
+                    # ceiling even after the one bounded recovery attempt
+                    # (see orchestrator.run_stage) -- this must NOT be
+                    # recorded as a healthy stage. Cost/provenance are
+                    # preserved exactly as a normal success would, since the
+                    # call was genuinely made (and, for a truncated case, may
+                    # include a discarded recovery attempt's sunk cost too).
+                    reason_text = {
+                        "empty_output": "Provider returned an empty response (no visible text).",
+                        "output_truncated": (
+                            "Provider response was truncated by the output length limit "
+                            "(even after one automatic retry, where applicable)."
+                        ),
+                    }.get(outcome.incomplete_reason, "Provider response was unusable.")
+                    self.repo.mark_stage_failed(
+                        stage.id,
+                        error=reason_text,
+                        requested_model=outcome.requested_model,
+                        fallback_used=outcome.fallback_used,
+                        fallback_reason=outcome.fallback_reason,
+                        model_attempts=outcome.model_attempts,
+                        attempt_log=outcome.attempt_log,
+                        estimated_cost_usd=outcome.estimated_cost_usd,
+                        failure_reason=outcome.incomplete_reason,
+                    )
                     run_failed = True
                 else:
                     self.repo.mark_stage_succeeded(

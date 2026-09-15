@@ -29,9 +29,11 @@ from llm_deliberation.web.presenter import (
     PROFILE_BLURB_KEYS,
     PROFILE_ORDER,
     build_pipeline,
+    compute_deliberation_quality,
     elapsed_seconds,
     format_datetime,
     format_duration,
+    group_attempts_by_model,
     is_terminal_run_status,
 )
 
@@ -110,6 +112,7 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
     # split_synthesis_sections' docstring. Presentation reorganization only:
     # it never infers meaning, just groups by existing heading boundaries.
     templates.env.filters["split_sections"] = split_synthesis_sections
+    templates.env.filters["group_attempts_by_model"] = group_attempts_by_model
 
     @jinja2.pass_context
     def _translate_filter(context: jinja2.runtime.Context, key: str) -> str:
@@ -133,7 +136,17 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
     def render_pipeline_fragment(record: RunRecord, ui_lang: str) -> str:
         groups = build_pipeline(record)
         return templates.get_template("partials/pipeline.html").render(
-            groups=groups, run_id=record.id, status=record.status, ui_lang=ui_lang
+            groups=groups,
+            run_id=record.id,
+            status=record.status,
+            ui_lang=ui_lang,
+            # Included here (not only in run_detail.html) so a run that
+            # transitions to "failed" over the live SSE connection -- which
+            # replaces only this fragment's innerHTML, deliberately without a
+            # page reload (see app.js) -- still gets an up-to-date quality
+            # summary without requiring a manual refresh. None while still
+            # running, exactly as on a fresh page load.
+            quality=compute_deliberation_quality(record),
         )
 
     def reserve(run_id: str) -> bool:
@@ -267,6 +280,11 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
             # still be retried/resumed/skipped) is not "currently running".
             # See presenter.TERMINAL_RUN_STATUSES.
             "live_updates": not is_terminal_run_status(record.status),
+            # None while running (nothing to report yet); once terminal, a
+            # deterministic, derived-only evidence-quality summary -- see
+            # presenter.compute_deliberation_quality. Never calls a model,
+            # so viewing this page never changes a run's cost or quality.
+            "quality": compute_deliberation_quality(record),
         }
 
         if record.status == "succeeded":

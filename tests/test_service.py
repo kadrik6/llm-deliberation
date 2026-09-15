@@ -684,3 +684,118 @@ def test_no_additional_deliberation_stage_was_introduced_for_bilingual_support(
     assert record.status == "succeeded"
     assert set(fake_orchestrator_state["log"]) == set(ALL_STAGE_NAMES)
     assert len(fake_orchestrator_state["log"]) == len(ALL_STAGE_NAMES)
+
+
+# -- reliability pass: empty/truncated artifacts must not look healthy -----
+# (Section 14, items 8-16: durable workflow + quality)
+
+
+def test_truncated_required_stage_fails_and_earlier_stages_survive(
+    service, fake_orchestrator_state
+):
+    fake_orchestrator_state["responses"] = {
+        "revision_a": {"incomplete_reason": "output_truncated"}
+    }
+    run_id = service.create_run("Q?", "economy", red_team_enabled=True)
+    record = asyncio.run(service.start_run(run_id))
+
+    assert record.status == "failed"
+    by_name = {s.name: s for s in record.stages}
+    for name in ("analysis_a", "analysis_b", "critique_a_of_b", "critique_b_of_a", "red_team"):
+        assert by_name[name].status == "succeeded"
+
+    assert by_name["revision_a"].status == "failed"
+    assert by_name["revision_a"].failure_reason == "output_truncated"
+    assert by_name["revision_b"].status == "succeeded"  # ran concurrently, unaffected
+
+
+def test_retry_after_truncation_only_reruns_the_failed_stage(service, fake_orchestrator_state):
+    fake_orchestrator_state["responses"] = {
+        "revision_a": {"incomplete_reason": "output_truncated"}
+    }
+    run_id = service.create_run("Q?", "economy", red_team_enabled=True)
+    asyncio.run(service.start_run(run_id))
+
+    fake_orchestrator_state["log"].clear()
+    fake_orchestrator_state["responses"] = {}  # simulate the underlying issue being fixed
+    record = asyncio.run(service.retry_stage(run_id, "revision_a"))
+
+    assert record.status == "succeeded"
+    assert set(fake_orchestrator_state["log"]) == {"revision_a", "convergence_analysis", "synthesis"}
+    assert fake_orchestrator_state["log"].count("revision_b") == 0
+
+
+def test_synthesis_does_not_start_when_a_required_revision_is_unusable(
+    service, fake_orchestrator_state
+):
+    fake_orchestrator_state["responses"] = {
+        "revision_b": {"incomplete_reason": "empty_output"}
+    }
+    run_id = service.create_run("Q?", "economy", red_team_enabled=True)
+    record = asyncio.run(service.start_run(run_id))
+
+    assert record.status == "failed"
+    by_name = {s.name: s for s in record.stages}
+    assert by_name["revision_b"].failure_reason == "empty_output"
+    assert by_name["convergence_analysis"].status == "pending"
+    assert by_name["synthesis"].status == "pending"
+
+
+def test_missing_required_evidence_prevents_convergence_from_running(
+    service, fake_orchestrator_state
+):
+    """The convergence_analysis stage must never run (and so can never
+    manufacture an A-vs-B conclusion) once a required candidate artifact is
+    unusable -- see presenter.compute_deliberation_quality's docstring and
+    Section 5 of the reliability pass."""
+    fake_orchestrator_state["responses"] = {
+        "analysis_a": {"incomplete_reason": "empty_output"}
+    }
+    run_id = service.create_run("Q?", "economy", red_team_enabled=False)
+    record = asyncio.run(service.start_run(run_id))
+
+    assert record.status == "failed"
+    assert "convergence_analysis" not in fake_orchestrator_state["log"]
+    by_name = {s.name: s for s in record.stages}
+    assert by_name["convergence_analysis"].status == "pending"
+
+
+def test_paid_truncated_attempt_cost_survives_a_successful_retry(
+    service, fake_orchestrator_state
+):
+    """A stage that first fails with a paid-but-truncated attempt, then
+    succeeds on retry, must keep the first attempt's cost in the run total
+    -- never silently overwritten by the successful attempt's cost alone."""
+    fake_orchestrator_state["responses"] = {
+        "revision_a": {"incomplete_reason": "output_truncated", "estimated_cost_usd": 0.05}
+    }
+    run_id = service.create_run("Q?", "economy", red_team_enabled=False)
+    record = asyncio.run(service.start_run(run_id))
+    assert record.status == "failed"
+    by_name = {s.name: s for s in record.stages}
+    assert by_name["revision_a"].estimated_cost_usd == pytest.approx(0.05)
+
+    fake_orchestrator_state["responses"] = {
+        "revision_a": {"estimated_cost_usd": 0.03}
+    }
+    record = asyncio.run(service.retry_stage(run_id, "revision_a"))
+
+    assert record.status == "succeeded"
+    by_name = {s.name: s for s in record.stages}
+    # Both the discarded truncated attempt's cost and the successful retry's
+    # cost are represented -- never just the latter.
+    assert by_name["revision_a"].estimated_cost_usd == pytest.approx(0.05 + 0.03)
+    assert record.estimated_total_cost_usd >= 0.05 + 0.03
+
+
+def test_viewing_a_run_does_not_alter_its_cost_or_quality(service, fake_orchestrator_state):
+    from llm_deliberation.web.presenter import compute_deliberation_quality
+
+    run_id = service.create_run("Q?", "economy", red_team_enabled=True)
+    asyncio.run(service.start_run(run_id))
+
+    first = service.get_run(run_id)
+    second = service.get_run(run_id)
+
+    assert first.estimated_total_cost_usd == second.estimated_total_cost_usd
+    assert compute_deliberation_quality(first) == compute_deliberation_quality(second)

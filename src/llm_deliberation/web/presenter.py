@@ -75,6 +75,120 @@ _SKIP_LABEL_KEYS: dict[str, str] = {
     "convergence_analysis": "skip_convergence_and_continue",
 }
 
+# Stages a deliberation cannot produce a trustworthy final answer without --
+# none of these are in SKIPPABLE_STAGE_NAMES, so a failure in any of them
+# already halts the run (see service._execute's run_failed gating) rather
+# than letting downstream stages (especially convergence_analysis) run on
+# missing evidence. Order matches the pipeline's own display order, purely
+# for a stable, readable list of reasons.
+REQUIRED_STAGE_ORDER: tuple[str, ...] = (
+    "analysis_a", "analysis_b",
+    "critique_a_of_b", "critique_b_of_a",
+    "revision_a", "revision_b",
+    "synthesis",
+)
+
+# i18n key (web/i18n.py) used to name each required stage in a quality-issue
+# bullet. Reuses the existing artifact-section titles where one exists;
+# synthesis has no artifact section of its own (see ARTIFACT_SECTIONS), so it
+# reuses its stage-group title instead of inventing a new translated string.
+_REQUIRED_STAGE_LABEL_KEYS: dict[str, str] = {
+    "analysis_a": "artifact_analysis_a",
+    "analysis_b": "artifact_analysis_b",
+    "critique_a_of_b": "artifact_critique_a_of_b",
+    "critique_b_of_a": "artifact_critique_b_of_a",
+    "revision_a": "artifact_revision_a",
+    "revision_b": "artifact_revision_b",
+    "synthesis": "stage_group_synthesis",
+}
+
+_OPTIONAL_STAGE_LABEL_KEYS: dict[str, str] = {
+    "red_team": "artifact_red_team",
+    "convergence_analysis": "artifact_convergence_analysis",
+}
+
+
+def _stage_is_usable(stage: StageRecord | None) -> bool:
+    """A stage counts as usable evidence only once it has actually succeeded
+    with non-empty text -- never inferred from "provider technically
+    responded". Works unmodified for historical runs that predate
+    failure_reason/incomplete_reason: a pre-existing empty artifact (always
+    derivable from stored text) is still caught; a pre-existing *truncated*
+    one cannot be detected retroactively (no signal was ever stored for it),
+    so it is treated as usable -- a neutral legacy default, never an invented
+    truncation claim about data this code cannot actually verify.
+    """
+    return stage is not None and stage.status == "succeeded" and bool(stage.text and stage.text.strip())
+
+
+def compute_deliberation_quality(record: RunRecord) -> dict | None:
+    """Deterministic, derived-only evidence-quality summary for a run.
+
+    Returns None while a run is still in progress (nothing to report yet --
+    see TERMINAL_RUN_STATUSES); once terminal (succeeded or failed), returns
+    {"level": "complete" | "degraded" | "incomplete", "reasons": [...]}.
+    Never calls a model: entirely computed from already-persisted stage
+    state, so viewing a run never changes its cost or quality (see
+    web/tests -- "viewing a run does not alter quality or cost").
+
+    - "incomplete": at least one required, non-skippable stage (see
+      REQUIRED_STAGE_ORDER) is missing/empty/truncated/failed. This is what
+      keeps a pipeline defect (an unusable candidate artifact) from ever
+      being described as if it were a genuine open question about the
+      user's actual request -- see convergence.render_for_prompt /
+      remaining_unknowns, which never receive pipeline-evidence gaps in the
+      first place because convergence_analysis's wave never runs without
+      all of these already succeeded.
+    - "degraded": every required stage is usable, but red_team (only when it
+      was actually configured on for this run) or convergence_analysis was
+      skipped after failing -- optional evidence intentionally sacrificed to
+      let the run still reach a synthesized answer. A red_team that was
+      simply disabled from the start is normal, not degraded: no stage row
+      for it exists at all in that case.
+    - "complete": every required stage usable, nothing optional skipped.
+
+    Each reason is {"stage": name, "label_key": i18n key, "kind":
+    "unavailable" | "truncated" | "skipped"} -- the template composes the
+    final bullet text from two small translated fragments (the stage's
+    existing artifact-title key, plus a "quality_status_*" suffix key) so no
+    new per-stage translated string needs to exist for this feature alone.
+    """
+    if not is_terminal_run_status(record.status):
+        return None
+
+    stages = {s.name: s for s in record.stages}
+
+    reasons: list[dict] = []
+    for name in REQUIRED_STAGE_ORDER:
+        stage = stages.get(name)
+        if _stage_is_usable(stage):
+            continue
+        kind = "truncated" if stage is not None and stage.failure_reason == "output_truncated" else "unavailable"
+        reasons.append({"stage": name, "label_key": _REQUIRED_STAGE_LABEL_KEYS[name], "kind": kind})
+
+    if reasons:
+        return {"level": "incomplete", "reasons": reasons}
+
+    degraded: list[dict] = []
+    red_team_stage = stages.get("red_team")
+    if record.red_team_enabled and red_team_stage is not None and red_team_stage.status == "skipped":
+        degraded.append({"stage": "red_team", "label_key": _OPTIONAL_STAGE_LABEL_KEYS["red_team"], "kind": "skipped"})
+    convergence_stage = stages.get("convergence_analysis")
+    if convergence_stage is not None and convergence_stage.status == "skipped":
+        degraded.append(
+            {
+                "stage": "convergence_analysis",
+                "label_key": _OPTIONAL_STAGE_LABEL_KEYS["convergence_analysis"],
+                "kind": "skipped",
+            }
+        )
+
+    if degraded:
+        return {"level": "degraded", "reasons": degraded}
+
+    return {"level": "complete", "reasons": []}
+
+
 PROFILE_ORDER: tuple[str, ...] = ("economy", "balanced", "max")
 # i18n keys (web/i18n.py) for each profile's blurb, translated in the
 # template via |t.
@@ -124,6 +238,35 @@ def format_datetime(value: str | None) -> str:
     return datetime.fromisoformat(value).strftime("%Y-%m-%d %H:%M")
 
 
+def group_attempts_by_model(attempt_log: list[dict] | None) -> list[dict]:
+    """Group a flat Gemini attempt_log (see providers._Attempt.to_dict) by
+    model, in first-seen/chain order.
+
+    The raw log is a flat, chronological list of every attempt across every
+    model in the fallback chain. Rendering it flat produces exactly the
+    confusing provenance the reliability pass calls out (a single "Attempts:
+    7 / Fallback reason: ..." line mixing failure causes from more than one
+    model). Grouping it here lets the template show, per model actually
+    tried: how many attempts, and that model's own final outcome/reason --
+    e.g. "Gemini 3.8 Flash: 4 attempts, failed: provider overload" followed
+    by "Gemini 3.7 Flash: 3 attempts, succeeded".
+    """
+    if not attempt_log:
+        return []
+    groups: list[dict] = []
+    index: dict[str, int] = {}
+    for entry in attempt_log:
+        model = entry.get("model")
+        if model not in index:
+            index[model] = len(groups)
+            groups.append({"model": model, "count": 0, "outcome": None, "reason": None})
+        group = groups[index[model]]
+        group["count"] += 1
+        group["outcome"] = entry.get("outcome")
+        group["reason"] = entry.get("reason")
+    return groups
+
+
 def build_pipeline(record: RunRecord) -> list[dict]:
     """Group a run's stages for display, matching STAGE_GROUPS order.
 
@@ -159,6 +302,9 @@ def build_pipeline(record: RunRecord) -> list[dict]:
                     "fallback_used": stage.fallback_used,
                     "fallback_reason": stage.fallback_reason,
                     "model_attempts": stage.model_attempts,
+                    "attempt_log": stage.attempt_log,
+                    "failure_reason": stage.failure_reason,
+                    "attempts_by_model": group_attempts_by_model(stage.attempt_log),
                     "running_note": running_note,
                     # A skippable, failed stage gets a "Retry" + "Skip"
                     # pair instead of the single generic retry button.

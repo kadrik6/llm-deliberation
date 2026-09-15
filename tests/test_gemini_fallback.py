@@ -225,6 +225,152 @@ def test_cost_uses_the_actual_model_that_succeeded():
     assert response.estimated_cost_usd == pytest.approx(0.0042)
 
 
+# -- incomplete (empty/truncated) responses are treated like transient -----
+# failures, absorbed into the same bounded budget (Sections 1/3/8) --------
+
+
+def make_incomplete_response(model: str, reason: str = "output_truncated", cost: float = 0.01) -> ModelResponse:
+    return ModelResponse(
+        provider="Google",
+        model=model,
+        text="cut off" if reason == "output_truncated" else "",
+        usage=Usage(input_tokens=100, output_tokens=200),
+        estimated_cost_usd=cost,
+        requested_model=model,
+        incomplete_reason=reason,
+    )
+
+
+def test_incomplete_response_is_retried_like_a_transient_failure():
+    fakes = {
+        "gemini-3.8-flash": FakeSingleModelProvider(
+            "gemini-3.8-flash", [make_incomplete_response("gemini-3.8-flash"), make_response("gemini-3.8-flash")]
+        ),
+    }
+    provider = build_provider(fakes)
+
+    response = provider.generate(system="sys", prompt="p")
+
+    assert response.incomplete_reason is None
+    assert response.model_attempts == 2
+    assert response.estimated_cost_usd == pytest.approx(0.01 + 0.01)
+
+
+def test_incomplete_response_eventually_falls_back():
+    fakes = {
+        "gemini-3.8-flash": FakeSingleModelProvider(
+            "gemini-3.8-flash", [make_incomplete_response("gemini-3.8-flash")] * 4
+        ),
+        "gemini-3.7-flash": FakeSingleModelProvider("gemini-3.7-flash", [make_response("gemini-3.7-flash")]),
+    }
+    provider = build_provider(fakes)
+
+    response = provider.generate(system="sys", prompt="p")
+
+    assert response.model == "gemini-3.7-flash"
+    assert response.fallback_used is True
+
+
+def test_incomplete_response_exhausting_the_whole_chain_raises_with_reason():
+    fakes = {
+        "gemini-3.8-flash": FakeSingleModelProvider(
+            "gemini-3.8-flash", [make_incomplete_response("gemini-3.8-flash")] * 4
+        ),
+    }
+    provider = build_provider(fakes)
+
+    with pytest.raises(ProviderGenerationError) as excinfo:
+        provider.generate(system="sys", prompt="p")
+
+    assert excinfo.value.reason == "output_truncated"
+    assert excinfo.value.estimated_cost_usd == pytest.approx(0.04)
+
+
+# -- Section 8: bounded wall-clock deadline for the whole chain attempt ----
+
+
+def test_wall_clock_deadline_stops_the_chain_even_with_retries_remaining():
+    """A provider that is merely slow (not erroring) must still be bounded:
+    the existing per-model retry-count budget alone does not cap how long
+    each individual call is allowed to take. Here every call "takes" 200s
+    (a fake clock, not a real sleep), so the second attempt already exceeds
+    a 300s deadline and must stop the chain rather than trying every model.
+    """
+    clock = {"t": 0.0}
+
+    def fake_clock() -> float:
+        return clock["t"]
+
+    class SlowFailingProvider:
+        def __init__(self, model):
+            self.model = model
+            self.calls = 0
+
+        def generate(self, *, system, prompt):
+            self.calls += 1
+            clock["t"] += 200.0  # each call "takes" 200 wall-clock seconds
+            raise server_error(503)
+
+    fakes = {"gemini-3.8-flash": SlowFailingProvider("gemini-3.8-flash")}
+    provider = GeminiFallbackProvider(
+        models=list(fakes.keys()),
+        max_output_tokens=1000,
+        sleep_fn=lambda s: None,
+        provider_factory=lambda m: fakes[m],
+        deadline_seconds=300.0,
+        clock_fn=fake_clock,
+    )
+
+    with pytest.raises(ProviderGenerationError) as excinfo:
+        provider.generate(system="sys", prompt="p")
+
+    assert "wall-clock" in str(excinfo.value).lower()
+    # Stopped after the 2nd attempt (400s elapsed >= 300s deadline), not
+    # after exhausting all 4 configured retries for this model.
+    assert fakes["gemini-3.8-flash"].calls == 2
+
+
+def test_wall_clock_deadline_does_not_fire_on_an_ordinary_fast_retry():
+    # One ordinary transient error followed by success, with real (stubbed,
+    # zero-advancing) time, must not be affected by the deadline at all.
+    fakes = {
+        "gemini-3.8-flash": FakeSingleModelProvider(
+            "gemini-3.8-flash", [server_error(503), make_response("gemini-3.8-flash")]
+        ),
+    }
+    provider = build_provider(fakes, deadline_seconds=300.0)
+
+    response = provider.generate(system="sys", prompt="p")
+
+    assert response.model == "gemini-3.8-flash"
+    assert response.fallback_used is False
+
+
+def test_deadline_is_deterministic_and_testable_via_injected_clock():
+    calls = {"n": 0}
+
+    def fake_clock() -> float:
+        # First call establishes `start`; every check thereafter reports
+        # exactly the deadline having been reached.
+        calls["n"] += 1
+        return 0.0 if calls["n"] == 1 else 10.0
+
+    fakes = {"gemini-3.8-flash": FakeSingleModelProvider("gemini-3.8-flash", [make_response("gemini-3.8-flash")])}
+    provider = GeminiFallbackProvider(
+        models=list(fakes.keys()),
+        max_output_tokens=1000,
+        sleep_fn=lambda s: None,
+        provider_factory=lambda m: fakes["gemini-3.8-flash"],
+        deadline_seconds=10.0,
+        clock_fn=fake_clock,
+    )
+
+    with pytest.raises(ProviderGenerationError) as excinfo:
+        provider.generate(system="sys", prompt="p")
+    assert "wall-clock" in str(excinfo.value).lower()
+    assert fakes["gemini-3.8-flash"].calls == 0  # deadline already hit before the first attempt
+
+
 def test_failed_attempt_cost_is_not_dropped_when_usage_is_exposed():
     # A failed attempt that nonetheless carries usage metadata (rare, but
     # possible in principle) must not silently disappear from the run cost.

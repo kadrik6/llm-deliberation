@@ -475,3 +475,132 @@ def test_unknown_language_falls_back_to_english_instruction():
     from llm_deliberation.prompts import output_language_instruction
 
     assert output_language_instruction("fr") == output_language_instruction("en")
+
+
+# -- change_status: unknown evidence must not become "no material change" --
+# (Section 14, items 17-19)
+
+
+def test_change_status_unknown_is_representable_and_not_material():
+    payload = _with(
+        material_changes=[
+            {
+                "candidate": "A",
+                "before": "(unavailable -- original analysis was truncated)",
+                "after": "(unavailable -- revision was truncated)",
+                "change_status": "unknown",
+                "triggers": [],
+            }
+        ]
+    )
+    analysis = parse_convergence_analysis(json.dumps(payload))
+    change = analysis.material_changes[0]
+    assert change.change_status == "unknown"
+    # Backward-compatible boolean view must never report "unknown" as material.
+    assert change.material is False
+
+
+def test_legacy_material_true_artifact_still_parses_as_material_status():
+    # A convergence artifact persisted before change_status existed only
+    # ever had a `material` boolean -- historical artifacts are never
+    # rewritten, so parsing must keep working on this exact old shape.
+    legacy_payload = _with(
+        material_changes=[
+            {
+                "candidate": "A",
+                "before": "Vendor-hosted preferred.",
+                "after": "Customer-controlled preferred.",
+                "material": True,
+                "triggers": [],
+            }
+        ]
+    )
+    analysis = parse_convergence_analysis(json.dumps(legacy_payload))
+    change = analysis.material_changes[0]
+    assert change.change_status == "material"
+    assert change.material is True
+
+
+def test_legacy_material_false_artifact_still_parses_as_non_material_status():
+    legacy_payload = _with(
+        material_changes=[
+            {
+                "candidate": "B",
+                "before": "Phased rollout.",
+                "after": "Phased rollout.",
+                "material": False,
+                "triggers": [],
+            }
+        ]
+    )
+    analysis = parse_convergence_analysis(json.dumps(legacy_payload))
+    change = analysis.material_changes[0]
+    assert change.change_status == "non_material"
+    assert change.material is False
+
+
+def test_render_for_prompt_separates_unknown_changes_from_material_ones():
+    payload = _with(
+        material_changes=[
+            {
+                "candidate": "A",
+                "before": "Vendor-hosted preferred.",
+                "after": "Customer-controlled preferred.",
+                "change_status": "material",
+                "triggers": [],
+            },
+            {
+                "candidate": "B",
+                "before": "(unavailable)",
+                "after": "(unavailable)",
+                "change_status": "unknown",
+                "triggers": [],
+            },
+        ]
+    )
+    analysis = parse_convergence_analysis(json.dumps(payload))
+    rendered = render_for_prompt(analysis)
+    assert "Material changes:" in rendered
+    assert "could not be determined" in rendered
+    # The unknown entry must not be silently dropped from the material list,
+    # nor counted as if it were a determined material change.
+    material_section = rendered.split("could not be determined")[0]
+    assert "Candidate A" in material_section
+    assert "Candidate B" not in material_section
+
+
+# -- synthesis deliverable-first rule (Section 14, items 20-22) ------------
+
+
+def test_synthesis_prompt_contains_a_deliverable_first_rule():
+    from llm_deliberation.prompts import synthesis
+
+    text = synthesis("Draft an email to the vendor.", "rev a", "rev b", None)
+    lowered = text.lower()
+    assert "deliverable" in lowered
+    assert "first" in lowered
+
+
+def test_deliverable_first_rule_is_present_regardless_of_run_language():
+    # synthesis() itself takes no language parameter -- only base_system()
+    # does (see prompts.py) -- so the rule's presence cannot depend on
+    # which language the run's output will be written in.
+    from llm_deliberation.prompts import base_system, synthesis
+
+    body = synthesis("Q?", "rev a", "rev b", None)
+    for language in ("en", "et"):
+        base_system(language)  # exercised for both, must not raise
+        assert "deliverable" in body.lower()
+
+
+def test_deliverable_first_rule_introduces_no_new_stage_or_api_call():
+    # The rule is pure prompt text for the existing synthesis stage --
+    # confirm synthesis() remains a plain string builder with no I/O.
+    import inspect
+
+    from llm_deliberation.prompts import synthesis
+
+    source = inspect.getsource(synthesis)
+    assert not any(line.strip().startswith("import ") for line in source.splitlines())
+    assert "await" not in source
+    assert "requests" not in source and "client" not in source.lower()

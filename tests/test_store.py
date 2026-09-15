@@ -83,3 +83,47 @@ def test_unknown_run_raises_keyerror(tmp_path):
         assert False, "expected KeyError"
     except KeyError:
         pass
+
+
+def test_stage_cost_accumulates_across_a_failed_then_successful_attempt(tmp_path):
+    """A paid-but-unusable attempt's cost must survive a later successful
+    retry of the same stage -- never overwritten/dropped (see
+    orchestrator.run_stage's bounded truncation recovery and
+    service.retry_stage)."""
+    repo = Repository(tmp_path / "db.sqlite3")
+    repo.insert_run("run1", question="Q?", context=None, profile="economy", red_team_enabled=False)
+    stage_id = repo.insert_stage("run1", "analysis_a")
+
+    repo.mark_stage_failed(
+        stage_id, error="truncated", estimated_cost_usd=0.05, failure_reason="output_truncated"
+    )
+    stage = repo.get_stage("run1", stage_id)
+    assert stage.estimated_cost_usd == 0.05
+    assert stage.failure_reason == "output_truncated"
+
+    repo.reset_stage(stage_id)
+    stage = repo.get_stage("run1", stage_id)
+    assert stage.estimated_cost_usd == 0.05  # reset never clears accumulated cost
+    assert stage.failure_reason is None  # but the classification is cleared
+
+    repo.mark_stage_succeeded(
+        stage_id, provider="Fake", model="m", text="ok", input_tokens=1, output_tokens=1,
+        estimated_cost_usd=0.03,
+    )
+    stage = repo.get_stage("run1", stage_id)
+    assert stage.status == "succeeded"
+    assert stage.failure_reason is None
+    assert abs(stage.estimated_cost_usd - (0.05 + 0.03)) < 1e-9
+
+
+def test_stage_cost_accumulates_across_two_failed_attempts(tmp_path):
+    repo = Repository(tmp_path / "db.sqlite3")
+    repo.insert_run("run1", question="Q?", context=None, profile="economy", red_team_enabled=False)
+    stage_id = repo.insert_stage("run1", "analysis_a")
+
+    repo.mark_stage_failed(stage_id, error="e1", estimated_cost_usd=0.01)
+    repo.reset_stage(stage_id)
+    repo.mark_stage_failed(stage_id, error="e2", estimated_cost_usd=0.02)
+
+    stage = repo.get_stage("run1", stage_id)
+    assert abs(stage.estimated_cost_usd - 0.03) < 1e-9

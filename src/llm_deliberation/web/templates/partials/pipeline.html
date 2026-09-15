@@ -1,3 +1,4 @@
+{% include "partials/quality_indicator.html" %}
 <div class="pipeline">
 {% for group in groups %}
   <div class="stage-group">
@@ -13,13 +14,39 @@
         {% elif row.status == 'skipped' %}
           <span class="stage-note">{{ "stage_skipped"|t }}{{ (" — " + row.fallback_reason) if row.fallback_reason else "" }}</span>
         {% elif row.status == 'succeeded' and row.fallback_used %}
+          {% if row.attempts_by_model %}
+          <div class="stage-fallback-note">
+            {% for g in row.attempts_by_model %}
+              {% if not loop.first %}<div class="fallback-indicator">{{ "fallback_indicator"|t }}</div>{% endif %}
+              <div class="fallback-attempt-group">
+                <code>{{ g.model }}</code> · {{ g.count|count_label("attempt") }} ·
+                {% if g.outcome == "succeeded" %}{{ "status_succeeded"|t }}
+                {% else %}{{ "status_failed"|t }}{% if g.reason %}: {{ g.reason }}{% endif %}
+                {% endif %}
+              </div>
+            {% endfor %}
+          </div>
+          {% else %}
           <span class="stage-fallback-note">
             Requested: <code>{{ row.requested_model }}</code> · Used: <code>{{ row.model }}</code>
             · Fallback reason: {{ row.fallback_reason }}
           </span>
+          {% endif %}
         {% elif row.status == 'failed' %}
           <span class="stage-error">{{ row.error }}</span>
-          {% if row.requested_model %}
+          {% if row.attempts_by_model %}
+            <div class="stage-fallback-note">
+              {% for g in row.attempts_by_model %}
+                {% if not loop.first %}<div class="fallback-indicator">{{ "fallback_indicator"|t }}</div>{% endif %}
+                <div class="fallback-attempt-group">
+                  <code>{{ g.model }}</code> · {{ g.count|count_label("attempt") }} ·
+                  {% if g.outcome == "succeeded" %}{{ "status_succeeded"|t }}
+                  {% else %}{{ "status_failed"|t }}{% if g.reason %}: {{ g.reason }}{% endif %}
+                  {% endif %}
+                </div>
+              {% endfor %}
+            </div>
+          {% elif row.requested_model %}
             <span class="stage-fallback-note">
               Requested: <code>{{ row.requested_model }}</code> · Attempts (this try): {{ row.model_attempts }}
               {%- if row.fallback_reason %} · Reason: {{ row.fallback_reason }}{% endif %}

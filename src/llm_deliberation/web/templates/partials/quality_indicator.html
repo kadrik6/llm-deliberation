@@ -1,0 +1,18 @@
+{% if quality is not none %}
+<div class="quality-indicator quality-{{ quality.level }}">
+  <p class="quality-indicator-label">{{ "quality_heading"|t }}</p>
+  <p class="quality-indicator-value">{{ ("quality_" ~ quality.level)|t }}</p>
+  {% if quality.reasons %}
+    <ul class="quality-indicator-reasons">
+      {% for reason in quality.reasons %}
+        <li>{{ reason.label_key|t }} &mdash; {{ ("quality_status_" ~ reason.kind)|t }}</li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+  {% if quality.level == "incomplete" %}
+    <p class="quality-indicator-note">{{ "quality_incomplete_note"|t }}</p>
+  {% elif quality.level == "degraded" %}
+    <p class="quality-indicator-note">{{ "quality_degraded_note"|t }}</p>
+  {% endif %}
+</div>
+{% endif %}

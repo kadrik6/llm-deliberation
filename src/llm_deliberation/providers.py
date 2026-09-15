@@ -21,7 +21,9 @@ class Provider(ABC):
     def generate(self, *, system: str, prompt: str) -> ModelResponse:
         raise NotImplementedError
 
-    def _result(self, text: str, usage: Usage) -> ModelResponse:
+    def _result(
+        self, text: str, usage: Usage, *, incomplete_reason: str | None = None
+    ) -> ModelResponse:
         return ModelResponse(
             provider=self.provider_name,
             model=self.model,
@@ -29,7 +31,31 @@ class Provider(ABC):
             usage=usage,
             estimated_cost_usd=estimate_cost(self.model, usage),
             requested_model=self.model,
+            incomplete_reason=incomplete_reason,
         )
+
+
+def _openai_incomplete_reason(response: object, text: str) -> str | None:
+    """Classify an OpenAI Responses API result as empty/truncated/complete.
+
+    Inspects the actual SDK response fields (openai 3.13.0,
+    openai.types.responses.response.Response): `status` is one of
+    'completed' | 'failed' | 'in_progress' | 'cancelled' | 'queued' |
+    'incomplete', and `incomplete_details.reason` (only set when status ==
+    'incomplete') is one of 'max_output_tokens' | 'max_messages' |
+    'content_filter' | 'steered'. Any 'incomplete' status is bucketed as
+    output_truncated -- for this app's workload (no tools, no multi-turn
+    steering) 'max_output_tokens' is overwhelmingly the practical case, and
+    the other reasons still describe a response that did not finish, so the
+    same bucket is not misleading. A whitespace-only response is always
+    empty_output, independent of status, since an empty artifact is unusable
+    even when the provider considers the call "completed".
+    """
+    if not text.strip():
+        return "empty_output"
+    if getattr(response, "status", None) == "incomplete":
+        return "output_truncated"
+    return None
 
 
 class OpenAIProvider(Provider):
@@ -62,7 +88,31 @@ class OpenAIProvider(Provider):
             input_tokens=int(getattr(usage_obj, "input_tokens", 0) or 0),
             output_tokens=int(getattr(usage_obj, "output_tokens", 0) or 0),
         )
-        return self._result(response.output_text or "", usage)
+        text = response.output_text or ""
+        return self._result(text, usage, incomplete_reason=_openai_incomplete_reason(response, text))
+
+
+_ANTHROPIC_TRUNCATION_STOP_REASONS = frozenset({"max_tokens", "model_context_window_exceeded"})
+
+
+def _anthropic_incomplete_reason(message: object, text: str) -> str | None:
+    """Classify an Anthropic Messages result (anthropic 1.5.0).
+
+    `stop_reason` is one of 'end_turn' | 'max_tokens' | 'stop_sequence' |
+    'tool_use' | 'pause_turn' | 'refusal' | 'model_context_window_exceeded'.
+    Only the two length-related reasons count as truncation here: 'end_turn'
+    and 'stop_sequence' are ordinary successful stops (never treated as
+    errors, per this project's requirements); 'tool_use' does not occur in
+    this app (no tools are ever offered to the model); 'refusal' and
+    'pause_turn' produce genuine model content (a refusal message, or a
+    resumable long-running turn) and are left as ordinary completions rather
+    than invented failure categories outside this iteration's scope.
+    """
+    if not text.strip():
+        return "empty_output"
+    if getattr(message, "stop_reason", None) in _ANTHROPIC_TRUNCATION_STOP_REASONS:
+        return "output_truncated"
+    return None
 
 
 class AnthropicProvider(Provider):
@@ -98,7 +148,35 @@ class AnthropicProvider(Provider):
             input_tokens=int(getattr(usage_obj, "input_tokens", 0) or 0),
             output_tokens=int(getattr(usage_obj, "output_tokens", 0) or 0),
         )
-        return self._result(text, usage)
+        return self._result(
+            text, usage, incomplete_reason=_anthropic_incomplete_reason(message, text)
+        )
+
+
+_GEMINI_TRUNCATION_STATUSES = frozenset({"incomplete", "budget_exceeded"})
+
+
+def _gemini_incomplete_reason(interaction: object, text: str) -> str | None:
+    """Classify a Gemini Interaction result (google-genai 2.23.0).
+
+    `interaction.status` is one of 'in_progress' | 'requires_action' |
+    'completed' | 'failed' | 'cancelled' | 'incomplete' | 'budget_exceeded' |
+    'queued'. Only 'incomplete' (the SDK's generic not-finished status) and
+    'budget_exceeded' (a token/resource ceiling was hit) indicate truncation;
+    the ModelOutputStep type exposes no finer-grained per-step finish reason
+    to distinguish safety-blocks from length limits. 'failed'/'cancelled'
+    are not handled here: in practice the SDK raises an exception for those
+    rather than returning them on a normal call, so classify_gemini_error's
+    existing exception-based transient/non-transient split already covers
+    that path; if the SDK ever did return one as a non-exception result, it
+    would just look like ordinary content here -- no worse than before this
+    change, since nothing was checked at all previously.
+    """
+    if not text.strip():
+        return "empty_output"
+    if getattr(interaction, "status", None) in _GEMINI_TRUNCATION_STATUSES:
+        return "output_truncated"
+    return None
 
 
 class GeminiProvider(Provider):
@@ -144,7 +222,8 @@ class GeminiProvider(Provider):
             output_tokens=int(getattr(usage_obj, "total_output_tokens", 0) or 0)
             + int(getattr(usage_obj, "total_thought_tokens", 0) or 0),
         )
-        return self._result(interaction.output_text or "", usage)
+        text = interaction.output_text or ""
+        return self._result(text, usage, incomplete_reason=_gemini_incomplete_reason(interaction, text))
 
 
 class ProviderGenerationError(RuntimeError):
@@ -171,6 +250,7 @@ class ProviderGenerationError(RuntimeError):
         fallback_used: bool,
         fallback_reason: str | None,
         estimated_cost_usd: float = 0.0,
+        reason: str = "provider_error",
     ):
         super().__init__(message)
         self.requested_model = requested_model
@@ -179,6 +259,12 @@ class ProviderGenerationError(RuntimeError):
         self.fallback_used = fallback_used
         self.fallback_reason = fallback_reason
         self.estimated_cost_usd = estimated_cost_usd
+        # Typed failure classification for user-facing code (see store.py's
+        # StageRecord.failure_reason) -- "empty_output" | "output_truncated" |
+        # "structured_output_invalid" | "provider_error" (the default: a
+        # transport/API/config failure, or anything else not classified more
+        # specifically). Callers must never derive this by parsing `message`.
+        self.reason = reason
 
 
 def classify_gemini_error(exc: BaseException) -> tuple[bool, str]:
@@ -249,6 +335,25 @@ class _Attempt:
 
 DEFAULT_GEMINI_RETRY_DELAYS: tuple[float, ...] = (2.0, 5.0, 10.0)
 
+# Wall-clock ceiling for the *whole* chain attempt (every model, every retry),
+# not just a per-model retry-count bound. A real run observed 2+ hours end to
+# end with red-team/Gemini fallback in the loop: the existing per-model retry
+# count is bounded, but nothing previously bounded how long the *individual
+# provider calls themselves* could take, so a slow-but-not-erroring provider
+# (or several attempts that are each individually slow) had no overall
+# ceiling. 300s is sized against this policy's own worst case: 3 models x
+# (4 attempts each + up to ~17s of jittered sleep) is already close to this
+# budget if each call takes roughly 20s, which is a reasonable upper bound
+# for a single "high effort" text generation call -- so one ordinary
+# transient error/retry sequence should still complete comfortably inside
+# the deadline, while a genuinely stuck/slow provider is bounded rather than
+# left to run for hours. Checked before starting each new attempt (not via
+# preemptive cancellation of an in-flight call, which the provider SDKs do
+# not support here), so the true worst case is this deadline plus the
+# duration of whichever single attempt was already in flight when it was
+# last checked -- an accepted, deliberate soft bound.
+DEFAULT_GEMINI_DEADLINE_SECONDS: float = 300.0
+
 
 class GeminiFallbackProvider(Provider):
     """Gemini provider with an ordered model fallback chain.
@@ -281,6 +386,8 @@ class GeminiFallbackProvider(Provider):
         sleep_fn: Callable[[float], None] = time.sleep,
         jitter_fn: Callable[[], float] = random.random,
         provider_factory: Callable[[str], Provider] | None = None,
+        deadline_seconds: float = DEFAULT_GEMINI_DEADLINE_SECONDS,
+        clock_fn: Callable[[], float] = time.monotonic,
     ):
         if not models:
             raise ValueError("GeminiFallbackProvider requires at least one model")
@@ -290,6 +397,8 @@ class GeminiFallbackProvider(Provider):
         self.retry_delays = tuple(retry_delays)
         self._sleep = sleep_fn
         self._jitter = jitter_fn
+        self.deadline_seconds = deadline_seconds
+        self._clock = clock_fn
         factory = provider_factory or (
             lambda m: GeminiProvider(m, max_output_tokens, thinking_level=thinking_level)
         )
@@ -308,10 +417,30 @@ class GeminiFallbackProvider(Provider):
         attempt_log: list[_Attempt] = []
         failed_cost = 0.0
         last_reason: str | None = None
+        last_incomplete_reason: str | None = None
+        start = self._clock()
+
+        def deadline_exceeded() -> bool:
+            return (self._clock() - start) >= self.deadline_seconds
 
         for model in chain:
             provider = self._providers[model]
             for retry_index in range(len(self.retry_delays) + 1):
+                if deadline_exceeded():
+                    raise ProviderGenerationError(
+                        f"Gemini red-team wall-clock budget of {self.deadline_seconds:.0f}s "
+                        f"was exceeded before all attempts/models were tried "
+                        f"({len(attempt_log)} attempt(s) so far).",
+                        requested_model=self.models[0],
+                        attempts=len(attempt_log),
+                        attempt_log=[a.to_dict() for a in attempt_log],
+                        fallback_used=len(attempt_log) > 0
+                        and attempt_log[-1].model != self.models[0],
+                        fallback_reason=last_reason,
+                        estimated_cost_usd=failed_cost,
+                        reason=last_incomplete_reason or "provider_error",
+                    )
+
                 delay_before = 0.0
                 if retry_index > 0:
                     delay_before = self._jittered_delay(self.retry_delays[retry_index - 1])
@@ -352,6 +481,30 @@ class GeminiFallbackProvider(Provider):
                         continue  # retry the same model after backoff
                     break  # exhausted retries for this model; advance the chain
                 else:
+                    if response.incomplete_reason is not None:
+                        # The call itself succeeded, but the artifact is empty
+                        # or was truncated -- treated exactly like a transient
+                        # failure of this attempt: same bounded retry/fallback
+                        # budget, cost never dropped. See providers.py module
+                        # docstring / Section 1-3 of the reliability pass.
+                        last_incomplete_reason = response.incomplete_reason
+                        reason = f"{model} returned {response.incomplete_reason.replace('_', ' ')}"
+                        last_reason = reason
+                        failed_cost += response.estimated_cost_usd
+                        attempt_log.append(
+                            _Attempt(
+                                model=model,
+                                attempt_number=attempt_number,
+                                outcome="failed",
+                                delay_before_seconds=round(delay_before, 3),
+                                reason=reason,
+                                estimated_cost_usd=response.estimated_cost_usd,
+                            )
+                        )
+                        if retry_index < len(self.retry_delays):
+                            continue  # retry the same model after backoff
+                        break  # exhausted retries for this model; advance the chain
+
                     attempt_log.append(
                         _Attempt(
                             model=model,
@@ -378,4 +531,5 @@ class GeminiFallbackProvider(Provider):
             fallback_used=len(chain) > 1,
             fallback_reason=last_reason,
             estimated_cost_usd=failed_cost,
+            reason=last_incomplete_reason or "provider_error",
         )

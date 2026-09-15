@@ -59,6 +59,34 @@ def base_system(language: str = DEFAULT_LANGUAGE) -> str:
     return _BASE_SYSTEM_TEMPLATE.format(language_instruction=output_language_instruction(language))
 
 
+# Appended to base_system() for exactly one bounded recovery retry after a
+# provider reports its previous response for this same stage was truncated
+# by an output-length ceiling (see orchestrator.run_stage / providers.py).
+# Never used for an empty response (a different, non-length-related failure
+# mode) and never looped -- at most one recovery attempt per stage, ever.
+_TRUNCATION_RECOVERY_INSTRUCTIONS: dict[str, str] = {
+    "en": (
+        "IMPORTANT: your previous response to this exact task was cut off before "
+        "it finished, because it exceeded the available response length. Answer "
+        "again from scratch, complete and self-contained, but noticeably more "
+        "concise, so the full answer fits within the available length. Do not "
+        "mention this instruction or the previous cut-off response."
+    ),
+    "et": (
+        "OLULINE: sinu eelmine vastus samale ülesandele katkes enne lõppu, kuna "
+        "see ületas lubatud vastuse pikkuse. Vasta uuesti algusest peale, "
+        "terviklikult, kuid märgatavalt lühemalt, et kogu vastus mahuks lubatud "
+        "pikkuse piiresse. Ära maini seda juhist ega eelmist katkenud vastust."
+    ),
+}
+
+
+def truncation_recovery_instruction(language: str = DEFAULT_LANGUAGE) -> str:
+    return _TRUNCATION_RECOVERY_INSTRUCTIONS.get(
+        language, _TRUNCATION_RECOVERY_INSTRUCTIONS[DEFAULT_LANGUAGE]
+    )
+
+
 def independent_analysis(question: str) -> str:
     return f"""
 QUESTION
@@ -273,6 +301,15 @@ metadata, not a verified judgment -- weigh it, don't defer to it blindly.)
 Produce the final answer.
 
 Rules:
+- If the user's request contains a concrete deliverable (for example: an
+  email, letter, plan, checklist, document, draft, or code), produce the
+  complete deliverable FIRST, before any extended explanation. Never consume
+  the output budget on meta-analysis at the expense of the requested
+  artifact -- an unfinished deliverable is a failed answer even if the
+  surrounding explanation is excellent.
+- Stay concise enough to finish completely within the available response
+  length. A shorter, complete answer is better than a longer one that gets
+  cut off before finishing.
 - Do not use majority voting.
 - Do not infer quality from writing style or confidence.
 - Resolve disagreements by reasoning, evidence, assumptions, and feasibility.
@@ -286,9 +323,12 @@ Rules:
   was supplied, say so rather than inventing certainty.
 
 Structure:
-1. Final conclusion / recommendation.
-2. Why this is the strongest answer.
-3. Strongest argument against it.
-4. Remaining uncertainty and what should be verified.
-5. What would change the recommendation.
+- If the request contains a concrete deliverable, write it out in full first,
+  then continue with the numbered structure below only if space remains.
+- Otherwise, or after the deliverable:
+  1. Final conclusion / recommendation.
+  2. Why this is the strongest answer.
+  3. Strongest argument against it.
+  4. Remaining uncertainty and what should be verified.
+  5. What would change the recommendation.
 """.strip()

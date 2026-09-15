@@ -1,6 +1,8 @@
 <section class="final-answer">
   <h2>{{ "final_answer_heading"|t }}</h2>
 
+  {% include "partials/quality_indicator.html" %}
+
   <div class="decision-snapshot">
     <p class="decision-snapshot-label">{{ "decision_snapshot_label"|t }}</p>
     {% if evolution is none %}
@@ -82,12 +84,30 @@
         ${{ "%.4f"|format(artifact.estimated_cost_usd) }}
       </p>
       {% if artifact.fallback_used %}
+      {% set attempt_groups = artifact.attempt_log|group_attempts_by_model %}
+      {% if attempt_groups %}
+      <div class="artifact-fallback-note">
+        {% for g in attempt_groups %}
+          {% if not loop.first %}<div class="fallback-indicator">{{ "fallback_indicator"|t }}</div>{% endif %}
+          <div class="fallback-attempt-group">
+            <code>{{ g.model }}</code> &middot; {{ g.count|count_label("attempt") }} &middot;
+            {% if g.outcome == "succeeded" %}{{ "status_succeeded"|t }}
+            {% else %}{{ "status_failed"|t }}{% if g.reason %}: {{ g.reason }}{% endif %}
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <!-- Backward-compat display for a stage record with fallback fields
+           but no attempt_log (e.g. a historical run predating it, or a test
+           fixture that never populated it) -- see Section 9/13. -->
       <p class="artifact-fallback-note">
         Requested: <code>{{ artifact.requested_model }}</code> &middot;
         Used: <code>{{ artifact.model }}</code> &middot;
         Fallback reason: {{ artifact.fallback_reason }} &middot;
         Attempts (this try): {{ artifact.model_attempts }}
       </p>
+      {% endif %}
       {% endif %}
     </details>
     {% endif %}

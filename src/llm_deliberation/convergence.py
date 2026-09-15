@@ -27,11 +27,12 @@ import json
 import re
 from typing import Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 ConvergenceLevel = Literal["converged", "partial", "diverged", "insufficient_information"]
 Candidate = Literal["A", "B"]
 TriggerSource = Literal["peer_critique", "red_team", "own_reassessment", "uncertain", "other"]
+ChangeStatus = Literal["material", "non_material", "unknown"]
 
 
 class ChangeTrigger(BaseModel):
@@ -57,10 +58,37 @@ class MaterialChange(BaseModel):
     candidate: Candidate
     before: str = Field(description="The candidate's original position/conclusion, concisely summarized.")
     after: str = Field(description="The candidate's revised position/conclusion, concisely summarized.")
-    material: bool = Field(
-        description="True only for a substantive change to the position/conclusion -- not wording or emphasis."
+    change_status: ChangeStatus = Field(
+        description=(
+            "'material' only for a substantive change to the position/conclusion -- not "
+            "wording or emphasis. 'non_material' when the position is essentially "
+            "unchanged. 'unknown' when there is not enough evidence to tell -- for "
+            "example the original or revised position given to you is missing, empty, "
+            "or unusable. Never use 'non_material' as a default when evidence is "
+            "actually missing -- that would misrepresent an unknown as 'no change'."
+        )
     )
     triggers: list[ChangeTrigger] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_material_bool(cls, data: object) -> object:
+        """Accept older persisted artifacts that only ever had a `material`
+        boolean (see the reliability-pass change adding `change_status`).
+        Historical convergence artifacts are never rewritten in storage --
+        this lets them keep parsing/rendering correctly instead, per this
+        project's backward-compatibility requirements."""
+        if isinstance(data, dict) and "change_status" not in data and "material" in data:
+            data = dict(data)
+            data["change_status"] = "material" if data.pop("material") else "non_material"
+        return data
+
+    @property
+    def material(self) -> bool:
+        """Backward-compatible boolean view (e.g. Jinja's `selectattr("material")`
+        in result.html). True only for 'material' -- 'unknown' is deliberately
+        NOT truthy here, since it is not evidence of a material change."""
+        return self.change_status == "material"
 
 
 class Agreement(BaseModel):
@@ -167,11 +195,11 @@ def render_for_prompt(analysis: ConvergenceAnalysis) -> str:
     data, just formatted for a prose prompt instead of for storage)."""
     lines = [f"Convergence assessment: {analysis.convergence}"]
 
-    if analysis.material_changes:
+    material = [c for c in analysis.material_changes if c.change_status == "material"]
+    unknown = [c for c in analysis.material_changes if c.change_status == "unknown"]
+    if material:
         lines.append("\nMaterial changes:")
-        for change in analysis.material_changes:
-            if not change.material:
-                continue
+        for change in material:
             if change.triggers:
                 trig = "; ".join(
                     t.summary + (" (cause uncertain)" if t.source == "uncertain" else "")
@@ -182,6 +210,10 @@ def render_for_prompt(analysis: ConvergenceAnalysis) -> str:
             lines.append(f"- Candidate {change.candidate}: {change.before} -> {change.after} ({trig})")
     else:
         lines.append("\nNo material position changes were identified.")
+    if unknown:
+        lines.append("\nChange status could not be determined (insufficient evidence) for:")
+        for change in unknown:
+            lines.append(f"- Candidate {change.candidate}: {change.before} -> {change.after}")
 
     if analysis.agreements_reached:
         lines.append("\nAgreements reached:")

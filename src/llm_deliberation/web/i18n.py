@@ -266,6 +266,48 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "history_cost": {"en": "Cost", "et": "Maksumus"},
     "history_language": {"en": "Language", "et": "Keel"},
     "history_empty": {"en": "No runs yet.", "et": "Ühtegi käiku pole veel."},
+
+    # -- deliberation quality indicator (near Decision Snapshot / pipeline) --
+    "quality_heading": {"en": "Deliberation quality", "et": "Arutelu kvaliteet"},
+    "quality_complete": {"en": "Complete", "et": "Täielik"},
+    "quality_degraded": {"en": "Degraded", "et": "Piiratud"},
+    "quality_incomplete": {"en": "Incomplete", "et": "Puudulik"},
+    "quality_status_unavailable": {"en": "unavailable", "et": "puudub"},
+    "quality_status_truncated": {
+        "en": "output truncated", "et": "vastus katkes pikkusepiirangu tõttu",
+    },
+    "quality_status_skipped": {
+        "en": "unavailable (skipped)", "et": "puudub (jäeti vahele)",
+    },
+    "quality_incomplete_note": {
+        "en": "Required evidence is missing, so convergence and synthesis could "
+              "not run normally. Retry or resume the failed stage below.",
+        "et": "Vajalikud lähteandmed puuduvad, mistõttu konsensuse analüüs ja "
+              "lõppsüntees ei saanud tavapäraselt käivituda. Proovi allpool "
+              "ebaõnnestunud etappi uuesti või jätka käiku.",
+    },
+    "quality_degraded_note": {
+        "en": "This run reached a final answer, but with less evidence than "
+              "usual -- treat conclusions that depend on the missing part "
+              "with extra caution.",
+        "et": "See arutelu jõudis lõppvastuseni, kuid vähem lähteandmete "
+              "põhjal kui tavaliselt -- puuduvast osast sõltuvatesse "
+              "järeldustesse suhtu ettevaatlikult.",
+    },
+    "unknown_evidence_label": {
+        "en": "Unknown (insufficient evidence)", "et": "Teadmata (ebapiisavad andmed)",
+    },
+    "fallback_indicator": {"en": "↓ fallback", "et": "↓ varuvariant"},
+
+    # -- privacy disclosure (near Start Deliberation) ------------------------
+    "privacy_disclosure": {
+        "en": "Your question and context are sent to the selected AI providers "
+              "for processing. Avoid including information you do not want "
+              "shared with those providers.",
+        "et": "Sinu küsimus ja lisatud kontekst saadetakse töötlemiseks valitud "
+              "tehisintellekti teenusepakkujatele. Ära lisa infot, mida sa ei "
+              "soovi nende teenusepakkujatega jagada.",
+    },
 }
 
 
@@ -298,6 +340,10 @@ _COUNT_NOUNS: dict[str, dict[str, tuple[str, str]]] = {
     "human_judgement_item": {
         "en": ("human judgement item", "human judgement items"),
         "et": ("inimotsust vajav punkt", "inimotsust vajavat punkti"),
+    },
+    "attempt": {
+        "en": ("attempt", "attempts"),
+        "et": ("katse", "katset"),
     },
 }
 

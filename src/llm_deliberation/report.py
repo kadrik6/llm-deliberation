@@ -56,6 +56,9 @@ _LABELS: dict[str, dict[str, str]] = {
     "candidate_word": {"en": "Candidate", "et": "Kandidaat"},
     "material_word": {"en": "material", "et": "sisuline"},
     "not_material_word": {"en": "not material", "et": "mitte-sisuline"},
+    "unknown_evidence_word": {
+        "en": "unknown -- insufficient evidence", "et": "teadmata -- ebapiisavad andmed",
+    },
     "before_word": {"en": "Before", "et": "Enne"},
     "after_word": {"en": "After", "et": "Pärast"},
     "trigger_word": {"en": "Trigger", "et": "Põhjus"},
@@ -128,10 +131,16 @@ def _decision_evolution_section(
     change_lines = []
     material_word = _label("material_word", language)
     not_material_word = _label("not_material_word", language)
+    unknown_evidence_word = _label("unknown_evidence_word", language)
+    _change_status_words = {
+        "material": material_word,
+        "non_material": not_material_word,
+        "unknown": unknown_evidence_word,
+    }
     for change in analysis.material_changes:
         change_lines.append(
             f"- **{_label('candidate_word', language)} {change.candidate}** "
-            f"({material_word if change.material else not_material_word})"
+            f"({_change_status_words[change.change_status]})"
         )
         change_lines.append(f"  - {_label('before_word', language)}: {change.before}")
         change_lines.append(f"  - {_label('after_word', language)}: {change.after}")

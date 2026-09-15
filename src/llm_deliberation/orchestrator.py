@@ -151,6 +151,7 @@ def _finalize_convergence_response(response: ModelResponse) -> ModelResponse:
             fallback_used=False,
             fallback_reason=None,
             estimated_cost_usd=response.estimated_cost_usd,
+            reason="structured_output_invalid",
         ) from exc
     response.text = convergence.canonical_json(analysis)
     return response
@@ -202,9 +203,48 @@ class DeliberationOrchestrator:
         # language only affects the shared system prompt (see
         # prompts.base_system) -- the user's original question is always
         # passed through unchanged, never translated (see _build_prompt).
-        response = await _call(
-            provider, system=prompts.base_system(language), prompt=prompt, **kwargs
-        )
+        system = prompts.base_system(language)
+        response = await _call(provider, system=system, prompt=prompt, **kwargs)
+
+        # Bounded automatic recovery for a clearly truncated (output-length-
+        # limited) response: exactly one retry of the same stage, never more.
+        # Not applied to GeminiFallbackProvider -- that provider already
+        # absorbs its own truncation detection into its existing per-model
+        # retry-then-fallback budget (see providers.py), so adding a second,
+        # separate recovery layer on top would double-apply retries for
+        # red_team specifically. Not applied to empty_output either: an
+        # empty response with no length-limit signal is a different failure
+        # mode this iteration deliberately does not auto-retry (see
+        # Section 3 of the reliability pass) -- the user can still Retry
+        # manually via the existing durable stage-retry UI.
+        if response.incomplete_reason == "output_truncated" and not isinstance(
+            provider, GeminiFallbackProvider
+        ):
+            recovery_system = system + "\n\n" + prompts.truncation_recovery_instruction(language)
+            sunk_cost = response.estimated_cost_usd
+            try:
+                response = await _call(provider, system=recovery_system, prompt=prompt, **kwargs)
+            except Exception as exc:
+                # The retry attempt itself raised (e.g. a transport error) --
+                # preserve the first (discarded, truncated) attempt's cost
+                # rather than letting it vanish along with a bare exception
+                # that carries no cost/provenance of its own.
+                raise ProviderGenerationError(
+                    f"{stage}: response was truncated, and the one bounded "
+                    f"recovery retry failed: {exc}",
+                    requested_model=response.requested_model or response.model,
+                    attempts=2,
+                    attempt_log=[],
+                    fallback_used=False,
+                    fallback_reason=None,
+                    estimated_cost_usd=sunk_cost,
+                    reason="output_truncated",
+                ) from exc
+            # Whether the retry finally succeeded or is still incomplete, the
+            # first attempt's cost was genuinely spent and must stay in the
+            # run's cost accounting -- never silently dropped.
+            response.estimated_cost_usd += sunk_cost
+
         if stage == "convergence_analysis":
             response = _finalize_convergence_response(response)
         return response
