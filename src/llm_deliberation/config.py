@@ -32,6 +32,17 @@ PROFILES = {
 # var to an empty string to disable fallback and only ever try GEMINI_MODEL.
 DEFAULT_GEMINI_FALLBACK_MODELS: tuple[str, ...] = ("gemini-3.7-flash", "gemini-3.6-flash")
 
+# Which provider runs the convergence_analysis stage. Default is Anthropic,
+# not Gemini or OpenAI:
+#  - different from the final synthesizer (OpenAI) -- a synthesis model
+#    grading its own deliberation's convergence would be a weaker signal;
+#  - ANTHROPIC_API_KEY is already mandatory for every run, so the default
+#    path adds no new required setup (defaulting to Gemini would silently
+#    require GEMINI_API_KEY even with red-team off).
+# Fully overridable via CONVERGENCE_PROVIDER/CONVERGENCE_MODEL.
+CONVERGENCE_PROVIDERS: tuple[str, ...] = ("openai", "anthropic", "gemini")
+DEFAULT_CONVERGENCE_PROVIDER = "anthropic"
+
 
 def _bool_env(name: str, default: bool) -> bool:
     raw = os.getenv(name)
@@ -71,6 +82,8 @@ class Settings:
     anthropic_model: str
     gemini_model: str
     gemini_fallback_models: list[str]
+    convergence_provider: str
+    convergence_model: str
     openai_effort: str
     anthropic_effort: str
     gemini_thinking_level: str
@@ -97,6 +110,8 @@ class Settings:
             else _bool_env("RED_TEAM_ENABLED", True)
         )
 
+        openai_model = os.getenv("OPENAI_MODEL") or defaults["openai_model"]
+        anthropic_model = os.getenv("ANTHROPIC_MODEL") or defaults["anthropic_model"]
         gemini_model = os.getenv("GEMINI_MODEL") or defaults["gemini_model"]
         fallback_raw = os.getenv("GEMINI_FALLBACK_MODELS")
         fallback_models = (
@@ -107,13 +122,33 @@ class Settings:
         # The preferred model is always tried first; never list it twice.
         gemini_fallback_models = [m for m in fallback_models if m != gemini_model]
 
+        convergence_provider = (
+            os.getenv("CONVERGENCE_PROVIDER") or DEFAULT_CONVERGENCE_PROVIDER
+        ).strip().lower()
+        if convergence_provider not in CONVERGENCE_PROVIDERS:
+            valid = ", ".join(CONVERGENCE_PROVIDERS)
+            raise ValueError(
+                f"Unknown CONVERGENCE_PROVIDER '{convergence_provider}'. Choose one of: {valid}"
+            )
+        # Reuses that provider's already-resolved model for this profile by
+        # default, so "max" gets a stronger convergence analyst and
+        # "economy" a cheaper one without a second profile axis to maintain.
+        _convergence_model_default = {
+            "openai": openai_model,
+            "anthropic": anthropic_model,
+            "gemini": gemini_model,
+        }[convergence_provider]
+        convergence_model = os.getenv("CONVERGENCE_MODEL") or _convergence_model_default
+
         return cls(
             profile=profile,
             red_team_enabled=red_team,
-            openai_model=os.getenv("OPENAI_MODEL") or defaults["openai_model"],
-            anthropic_model=os.getenv("ANTHROPIC_MODEL") or defaults["anthropic_model"],
+            openai_model=openai_model,
+            anthropic_model=anthropic_model,
             gemini_model=gemini_model,
             gemini_fallback_models=gemini_fallback_models,
+            convergence_provider=convergence_provider,
+            convergence_model=convergence_model,
             openai_effort=os.getenv("OPENAI_EFFORT", "high"),
             anthropic_effort=os.getenv("ANTHROPIC_EFFORT", "high"),
             gemini_thinking_level=os.getenv("GEMINI_THINKING_LEVEL", "high"),
@@ -126,7 +161,8 @@ class Settings:
             missing.append("OPENAI_API_KEY")
         if not os.getenv("ANTHROPIC_API_KEY"):
             missing.append("ANTHROPIC_API_KEY")
-        if self.red_team_enabled and not os.getenv("GEMINI_API_KEY"):
+        needs_gemini = self.red_team_enabled or self.convergence_provider == "gemini"
+        if needs_gemini and not os.getenv("GEMINI_API_KEY"):
             missing.append("GEMINI_API_KEY")
 
         if missing:

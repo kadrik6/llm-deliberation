@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from llm_deliberation import convergence
+
 
 BASE_SYSTEM = """
 You are one component in a multi-model deliberation system.
@@ -114,13 +116,94 @@ Return:
 """.strip()
 
 
+def convergence_analysis(
+    question: str,
+    analysis_a: str,
+    analysis_b: str,
+    critique_a_of_b: str,
+    critique_b_of_a: str,
+    red_team_report: str | None,
+    revision_a: str,
+    revision_b: str,
+) -> str:
+    red = red_team_report or "(No third-model red-team was used.)"
+    schema = convergence.schema_for_prompt()
+    return f"""
+ORIGINAL QUESTION
+{question}
+
+CANDIDATE A -- ORIGINAL ANALYSIS
+{analysis_a}
+
+CANDIDATE B -- ORIGINAL ANALYSIS
+{analysis_b}
+
+CRITIQUE OF A (BY B)
+{critique_b_of_a}
+
+CRITIQUE OF B (BY A)
+{critique_a_of_b}
+
+RED-TEAM REPORT
+{red}
+
+CANDIDATE A -- REVISED POSITION
+{revision_a}
+
+CANDIDATE B -- REVISED POSITION
+{revision_b}
+
+You are a meta-analyst. Your ONLY job is to compare each candidate's original
+analysis to its revised position, and compare the two revised positions to
+each other. You are NOT asked to produce a recommendation, a synthesis, or a
+judgment on which candidate is right -- that is a separate stage's job.
+
+Identify:
+1. Material changes in position/conclusion between each candidate's original
+   analysis and its revision -- changes that would affect a decision, not
+   wording or emphasis changes.
+2. What appears to have triggered each material change, tracing it to a
+   specific stage (own_reassessment, peer_critique, red_team) when you can
+   reasonably tell. If you cannot reliably tell what caused a change, say so
+   explicitly (source: "uncertain") rather than guessing -- a fabricated
+   cause is worse than an honest "cannot be determined reliably."
+3. Agreements the two candidates reached, whether or not they held them from
+   the start.
+4. Disagreements that remain unresolved between the two revised positions.
+5. Whether the candidates converged, partially converged, diverged, or
+   whether there is not enough information in what you were given to tell.
+6. Missing information that, if available, would likely help resolve a
+   disagreement.
+7. Issues that are not resolvable by more analysis at all -- genuine value
+   judgments or decisions only a human should make.
+
+Rules:
+- Do not produce a final recommendation or pick a winner between A and B.
+- Do not invent a specific trigger for a change you cannot actually trace to
+  the material you were given -- prefer "uncertain" to a fabricated cause.
+- Do not include your reasoning process, chain-of-thought, or working notes.
+  Only the final conclusions belong in the output.
+- This question may not be a binary decision -- use "position" and
+  "conclusion" language that fits whatever kind of question it is.
+- Respond with a single JSON object matching this schema exactly, and
+  nothing else -- no markdown code fence, no commentary before or after it:
+
+{schema}
+""".strip()
+
+
 def synthesis(
     question: str,
     revision_a: str,
     revision_b: str,
     red_team_report: str | None,
+    convergence_context: str | None = None,
 ) -> str:
     red = red_team_report or "(No third-model red-team was used.)"
+    convergence_section = (
+        convergence_context
+        or "(Change/convergence analysis unavailable for this run.)"
+    )
     return f"""
 ORIGINAL QUESTION
 {question}
@@ -134,6 +217,12 @@ REVISED CANDIDATE B
 RED-TEAM REPORT
 {red}
 
+CONVERGENCE / CHANGE ANALYSIS
+(An independent meta-analysis of how each candidate's position changed
+during deliberation and where they still disagree. It is analytical
+metadata, not a verified judgment -- weigh it, don't defer to it blindly.)
+{convergence_section}
+
 Produce the final answer.
 
 Rules:
@@ -142,6 +231,10 @@ Rules:
 - Resolve disagreements by reasoning, evidence, assumptions, and feasibility.
 - Do not mention model/provider names.
 - Preserve meaningful uncertainty instead of smoothing it away.
+- If the convergence/change analysis reports unresolved disagreements,
+  acknowledge them explicitly rather than silently manufacturing consensus.
+  If it is unavailable for this run, say so plainly instead of guessing at
+  whether the candidates agree.
 - If an important factual claim requires current external verification and none
   was supplied, say so rather than inventing certainty.
 

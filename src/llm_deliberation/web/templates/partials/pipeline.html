@@ -25,7 +25,7 @@
               {%- if row.fallback_reason %} · Reason: {{ row.fallback_reason }}{% endif %}
             </span>
           {% endif %}
-          {% if row.skippable %}
+          {% if row.skippable and row.fallback_chain_retry %}
             <form method="post" action="/runs/{{ run_id }}/stages/{{ row.name }}/retry" class="inline-form">
               <input type="hidden" name="mode" value="preferred_only">
               <button type="submit">Retry preferred model</button>
@@ -35,7 +35,14 @@
               <button type="submit">Retry with fallback chain</button>
             </form>
             <form method="post" action="/runs/{{ run_id }}/stages/{{ row.name }}/skip" class="inline-form">
-              <button type="submit">Skip red-team and continue</button>
+              <button type="submit">{{ row.skip_label }}</button>
+            </form>
+          {% elif row.skippable %}
+            <form method="post" action="/runs/{{ run_id }}/stages/{{ row.name }}/retry" class="inline-form">
+              <button type="submit">Retry failed stage</button>
+            </form>
+            <form method="post" action="/runs/{{ run_id }}/stages/{{ row.name }}/skip" class="inline-form">
+              <button type="submit">{{ row.skip_label }}</button>
             </form>
           {% else %}
             <form method="post" action="/runs/{{ run_id }}/stages/{{ row.name }}/retry" class="inline-form">

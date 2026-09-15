@@ -148,11 +148,17 @@ class GeminiProvider(Provider):
 
 
 class ProviderGenerationError(RuntimeError):
-    """Raised when a fallback-capable provider ultimately fails to generate.
+    """Raised when a provider call ultimately fails, with cost/provenance attached.
 
-    Carries structured provenance (which model was requested, how many
-    attempts were made, and a full per-attempt log) so the caller can
-    persist an audit trail instead of only a flattened error string.
+    Originally introduced for GeminiFallbackProvider (which model was
+    requested, how many attempts were made, a full per-attempt log), but
+    also reused by orchestrator._finalize_convergence_response for a
+    convergence_analysis response that fails schema validation: any
+    fallback-agnostic caller can pass fallback_used=False, fallback_reason=
+    None, attempts=1, attempt_log=[] and still get the important property --
+    an already-incurred cost is carried on the exception, not dropped, so
+    the service layer can persist it instead of falling back to a
+    flattened error string with no audit trail.
     """
 
     def __init__(

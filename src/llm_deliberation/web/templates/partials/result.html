@@ -17,13 +17,19 @@
   </div>
 </section>
 
+{% include "partials/convergence_summary.html" %}
+
 <section class="artifacts">
   {% for name, title in artifact_sections %}
     {% set artifact = artifacts.get(name) %}
     {% if artifact %}
     <details>
       <summary>{{ title }}</summary>
-      <div class="markdown-body">{{ artifact.text|render_markdown }}</div>
+      {% if name == "convergence_analysis" %}
+        <pre class="raw-json">{{ artifact.text }}</pre>
+      {% else %}
+        <div class="markdown-body">{{ artifact.text|render_markdown }}</div>
+      {% endif %}
       <p class="artifact-meta">
         {{ artifact.provider }} &middot; <code>{{ artifact.model }}</code> &middot;
         {{ artifact.usage.input_tokens }} in / {{ artifact.usage.output_tokens }} out &middot;

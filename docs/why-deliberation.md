@@ -76,9 +76,10 @@ task-dependent -- see the caveats below.
 ## Why outputs are persisted and inspectable
 
 Every stage's raw output -- both independent analyses, both critiques, the
-optional red-team report, both revisions, and the final synthesis -- is
-written to SQLite as soon as that stage succeeds, and can be exported as a
-single Markdown report. See [ADR 003](decisions/003-durable-sqlite-runs.md).
+optional red-team report, both revisions, the convergence analysis, and
+the final synthesis -- is written to SQLite as soon as that stage
+succeeds, and can be exported as a single Markdown report. See
+[ADR 003](decisions/003-durable-sqlite-runs.md).
 
 This is a deliberate rejection of "just show me the final answer." A
 synthesis you cannot trace back to the reasoning and disagreement that
@@ -88,6 +89,16 @@ artifact means a user (or a future evaluation harness) can check whether
 the red-team's findings actually changed a revision, whether a critique
 was acted on or correctly dismissed, and where the final answer's claims
 actually came from.
+
+That last question -- did a critique actually change anything -- used to
+require a reader to compare an analysis and its revision by hand. The
+convergence-analysis stage
+([ADR 006](decisions/006-explicit-convergence-analysis.md)) makes that
+comparison an explicit, structured, persisted part of the run instead of
+something left implicit in two blocks of prose: material position
+changes, their likely triggers, agreements reached, and disagreements
+that survived deliberation are recorded as their own artifact, separate
+from (and produced before) the final synthesis.
 
 ## What this does *not* establish
 

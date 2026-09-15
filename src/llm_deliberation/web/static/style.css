@@ -349,6 +349,60 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 .markdown-body th { background: var(--bg); font-weight: 600; }
 .artifact-fallback-note { color: var(--text-muted); font-size: 0.85rem; margin: 0.35rem 0 0; }
 
+.raw-json {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85em;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.85em 1em;
+  overflow-x: auto;
+  margin: 0.75rem 0;
+}
+
+/* Decision evolution: the convergence_analysis summary shown right after
+   the final answer (see partials/convergence_summary.html). Deliberately
+   plain -- restrained bordered blocks reusing the same tokens as
+   .stage-group/.final-answer, not a "wall of cards". */
+.decision-evolution {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 1.25rem 1.4rem;
+  margin-bottom: 1.5rem;
+}
+
+.decision-evolution h3 { margin-top: 1.1rem; }
+.decision-evolution h3:first-of-type { margin-top: 0.25rem; }
+
+.decision-evolution ul { margin: 0 0 1em; padding-left: 1.4em; }
+.decision-evolution li { margin: 0.25em 0; }
+
+.convergence-badge {
+  display: inline-block;
+  padding: 0.2rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin: 0 0 0.75rem;
+}
+.convergence-badge.convergence-converged { background: #e1efe9; color: var(--ok); }
+.convergence-badge.convergence-partial { background: #fbe9cf; color: var(--running); }
+.convergence-badge.convergence-diverged { background: var(--danger-bg); color: var(--danger); }
+.convergence-badge.convergence-insufficient-information { background: #eee; color: var(--text-muted); }
+
+.change-card, .disagreement-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.75rem 0.9rem;
+  margin-bottom: 0.6rem;
+  background: var(--bg);
+}
+.change-card p, .disagreement-card p { margin: 0.25rem 0; }
+.change-candidate, .disagreement-topic { font-weight: 600; margin-bottom: 0.35rem !important; }
+
 .history-table {
   width: 100%;
   border-collapse: collapse;

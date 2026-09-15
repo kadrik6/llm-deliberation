@@ -53,6 +53,47 @@ pipeline" as an undifferentiated whole.
 - **Latency.** Already available from each stage's `started_at` /
   `completed_at` timestamps.
 
+### Convergence-analysis-specific metrics
+
+`convergence_analysis` (see
+[ADR 006](../docs/decisions/006-explicit-convergence-analysis.md)) makes
+several new claims explicit and checkable -- these can only be measured
+once the harness below exists, and are listed here so this stage's own
+reliability is evaluated with the same rigor as everything else, not
+assumed correct because it produces structured output:
+
+- **Frequency of material position changes.** Across a question set, how
+  often does the stage report at least one `material: true` change? A
+  rate near 0% or 100% would itself be a signal the prompt or model isn't
+  discriminating well between substantive and cosmetic changes.
+- **Frequency of unresolved disagreement.** How often do the two revised
+  positions still disagree, per this stage's own report.
+- **Convergence rate.** Distribution across `converged` / `partial` /
+  `diverged` / `insufficient_information` over the question set.
+- **Agreement with blind human evaluation.** Have a human rater (blind to
+  which text is "before" and "after", and blind to the model's own
+  convergence label) independently judge whether a material change
+  occurred and whether the two final positions actually agree; compare to
+  this stage's output.
+- **False convergence.** The system reports `converged` or `partial` while
+  blind human evaluators identify a meaningful remaining disagreement the
+  report missed or understated. This is the failure mode this stage
+  exists specifically to catch in the *synthesizer* -- it needs to be
+  checked for in this stage too, not assumed absent.
+- **False disagreement.** The reverse: the system reports unresolved
+  disagreement or non-convergence where a blind human rater sees the
+  positions as substantively the same.
+- **Trigger-attribution accuracy.** When the stage attributes a change to
+  a specific prior stage (not marked `"uncertain"`), does a human rater
+  agree that stage plausibly caused it? Separately, how often is
+  `"uncertain"` used -- a rate of zero across many runs would be a signal
+  the model is over-claiming causal attribution rather than genuinely
+  admitting uncertainty.
+- **Incremental cost/latency.** This stage's own `estimated_cost_usd` and
+  `started_at`/`completed_at` duration, isolated from the rest of the
+  run's total -- already available per-stage with no new instrumentation,
+  same as the metrics above.
+
 ## Blind evaluation
 
 Where feasible, raters (human or a separate model acting as judge) should

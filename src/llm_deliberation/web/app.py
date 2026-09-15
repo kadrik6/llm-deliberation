@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response, Streamin
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from llm_deliberation import report
+from llm_deliberation import convergence, report
 from llm_deliberation.config import default_profile, default_red_team_enabled
 from llm_deliberation.service import DeliberationService
 from llm_deliberation.store import RunRecord
@@ -209,11 +209,16 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
             }
             if result.red_team is not None:
                 artifacts["red_team"] = result.red_team
+            evolution = None
+            if result.convergence is not None:
+                artifacts["convergence_analysis"] = result.convergence
+                evolution = convergence.parse_convergence_analysis(result.convergence.text)
             context.update(
                 {
                     "result": result,
                     "artifacts": artifacts,
                     "artifact_sections": ARTIFACT_SECTIONS,
+                    "evolution": evolution,
                 }
             )
         else:

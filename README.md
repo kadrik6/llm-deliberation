@@ -61,6 +61,13 @@ response. See [Project status](#project-status) and
   more auditable than a single model's answer. Every independent
   analysis, critique, red-team report, and revision is stored, not just
   the final text.
+- **Why convergence/change analysis is its own stage, not part of
+  synthesis:** a model whose job is to produce one coherent final answer
+  has every incentive to understate remaining disagreement. A separate,
+  structured comparison of each candidate's before/after position -- run
+  before synthesis ever sees the question -- records what changed, what
+  seems to have caused it, and what's still unresolved without that
+  pressure. ([ADR 006](docs/decisions/006-explicit-convergence-analysis.md))
 
 Full reasoning: [`docs/why-deliberation.md`](docs/why-deliberation.md).
 
@@ -109,6 +116,11 @@ analysis_a      analysis_b        independent -- neither sees the other
            revision_a      revision_b
                  │              │
                  └──────┬───────┘
+                        ▼
+              convergence_analysis        compares before/after positions;
+              (Anthropic by default)       reports changes, agreements,
+                        │                  and unresolved disagreement --
+                        │                  never a recommendation
                         ▼
                     synthesis
                         │
@@ -288,6 +300,45 @@ See [ADR 005](docs/decisions/005-gemini-model-fallback.md) for the full
 reasoning and [`docs/architecture.md`](docs/architecture.md) for where
 this lives in the provider layer.
 
+## Decision evolution
+
+The tool records not just a final answer, but how the deliberation got
+there: a `convergence_analysis` stage runs after both revisions succeed
+and compares each candidate's original analysis to its revision, and the
+two revisions to each other. It reports, as one validated structured
+result (not free-form prose):
+
+- **material position/conclusion changes** -- and what appears to have
+  triggered each one (a peer critique, the red-team report, or the
+  candidate's own reassessment -- or "uncertain" when the cause genuinely
+  can't be traced, which is preferred over a fabricated one);
+- **agreements reached** during deliberation;
+- **unresolved disagreements** that survived it, with why they remain
+  unresolved and what's at stake in leaving them unresolved;
+- **remaining unknowns** that would help resolve a disagreement if they
+  were available;
+- **issues flagged as requiring human judgement** rather than more
+  analysis.
+
+**This is model-generated analytical metadata, not proof of causality or
+correctness.** The analyst is the same kind of model as every other
+stage, asked a narrower question -- it can miss a real change, flag a
+cosmetic one as material, or mis-attribute a cause. It is disclosed as
+such everywhere it's shown, and it never produces a recommendation; the
+final synthesizer receives it as context and is explicitly instructed not
+to silently manufacture consensus over a disagreement it reports.
+
+`convergence_analysis` is its own persisted, retryable stage (like
+red-team, it can be skipped after a failure so the rest of the run isn't
+blocked -- the UI and Markdown export then say plainly "Change/convergence
+analysis unavailable for this run" rather than pretending it succeeded).
+By default it runs on Anthropic -- deliberately different from the final
+synthesizer (OpenAI) -- configurable via `CONVERGENCE_PROVIDER` /
+`CONVERGENCE_MODEL` in `.env`. See
+[ADR 006](docs/decisions/006-explicit-convergence-analysis.md) for the
+full reasoning and [`docs/architecture.md`](docs/architecture.md) for how
+it fits into the stage graph.
+
 ## Cost & token tracking
 
 Every stage's input/output token counts and an estimated USD cost
@@ -370,8 +421,10 @@ Not yet run. See [`evals/README.md`](evals/README.md) for the intended
 comparison arms (single model / two independent models / + cross-critique
 / full workflow with red-team), candidate metrics (factual error rate,
 unsupported claims, missed alternatives, answer quality, red-team
-contribution, cost, latency), and the intent to score blindly where
-feasible.
+contribution, cost, latency), metrics specific to the convergence-analysis
+stage (material-change frequency, convergence rate, agreement with blind
+human evaluation, false-convergence/false-disagreement rates), and the
+intent to score blindly where feasible.
 
 ## Development
 

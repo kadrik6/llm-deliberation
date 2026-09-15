@@ -44,6 +44,7 @@ class RunResult:
     red_team: ModelResponse | None
     revision_a: ModelResponse
     revision_b: ModelResponse
+    convergence: ModelResponse | None
     synthesis: ModelResponse
     context: str | None = None
 
@@ -60,6 +61,8 @@ class RunResult:
         ]
         if self.red_team is not None:
             items.append(self.red_team)
+        if self.convergence is not None:
+            items.append(self.convergence)
         return items
 
     @property

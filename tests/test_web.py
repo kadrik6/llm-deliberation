@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 
 def _submit(client, *, question="What should we do?", profile="economy", red_team=False, context=""):
     data = {"question": question, "profile": profile, "context": context}
@@ -94,9 +96,13 @@ def test_retry_endpoint_calls_the_correct_service_operation(client, service, fak
 
     record = service.get_run(run_id)
     assert record.status == "succeeded"
-    # Only the retried stage and the downstream stage it unblocked ran --
+    # Only the retried stage and the downstream stages it unblocked ran --
     # not analysis/critique/revision_b, which had already succeeded.
-    assert set(fake_orchestrator_state["log"]) == {"revision_a", "synthesis"}
+    assert set(fake_orchestrator_state["log"]) == {
+        "revision_a",
+        "convergence_analysis",
+        "synthesis",
+    }
 
 
 def test_history_lists_persisted_runs(client):
@@ -399,3 +405,273 @@ def test_copy_final_answer_source_still_holds_raw_markdown(client, service, fake
     # The exact raw Markdown text (the JS copy handler reads .textContent
     # from this element) must be present, unrendered, inside it.
     assert f'<pre id="final-answer-text" hidden>{_MARKDOWN_TEXT}</pre>' in body
+
+
+# -- Decision evolution (convergence_analysis) in the web UI -----------------
+
+
+def _convergence_response(**overrides) -> dict:
+    payload = {
+        "convergence": "converged",
+        "material_changes": [],
+        "agreements_reached": [],
+        "unresolved_disagreements": [],
+        "remaining_unknowns": [],
+        "human_judgement_required": [],
+    }
+    payload.update(overrides)
+    return {"text": json.dumps(payload)}
+
+
+def test_ui_renders_what_changed_correctly(client, service, fake_orchestrator_state):
+    fake_orchestrator_state["responses"] = {
+        "convergence_analysis": _convergence_response(
+            convergence="partial",
+            material_changes=[
+                {
+                    "candidate": "A",
+                    "before": "Vendor-hosted deployment preferred.",
+                    "after": "Customer-controlled deployment preferred.",
+                    "material": True,
+                    "triggers": [
+                        {
+                            "source": "peer_critique",
+                            "stage": "critique_b_of_a",
+                            "summary": "B raised a data custody risk.",
+                        }
+                    ],
+                },
+                {
+                    "candidate": "B",
+                    "before": "Safeguard-based approach.",
+                    "after": "Safeguard-based approach.",
+                    "material": False,
+                    "triggers": [],
+                },
+            ],
+        )
+    }
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    detail = client.get(f"/runs/{run_id}")
+    body = detail.text
+    assert "Decision evolution" in body
+    assert "Convergence: Partial" in body
+    assert "Candidate A" in body
+    assert "Vendor-hosted deployment preferred." in body
+    assert "Customer-controlled deployment preferred." in body
+    assert "B raised a data custody risk." in body
+    assert "Material change:</strong> Yes" in body
+    assert "Material change:</strong> No" in body
+
+
+def test_ui_renders_unresolved_disagreements_correctly(client, service, fake_orchestrator_state):
+    fake_orchestrator_state["responses"] = {
+        "convergence_analysis": _convergence_response(
+            convergence="partial",
+            unresolved_disagreements=[
+                {
+                    "topic": "Data custody",
+                    "candidate_a_position": "Customer-controlled deployment preferred.",
+                    "candidate_b_position": "Vendor-hosted processing acceptable with safeguards.",
+                    "why_unresolved": "Depends on regulatory posture not stated in the question.",
+                    "decision_impact": "Affects contract structure and cost.",
+                }
+            ],
+        )
+    }
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    detail = client.get(f"/runs/{run_id}")
+    body = detail.text
+    assert "Where they still disagree" in body
+    assert "Data custody" in body
+    assert "Customer-controlled deployment preferred." in body
+    assert "Vendor-hosted processing acceptable with safeguards." in body
+    assert "Depends on regulatory posture" in body
+    assert "Affects contract structure and cost." in body
+
+
+def test_ui_renders_agreements_unknowns_and_human_judgement(client, service, fake_orchestrator_state):
+    fake_orchestrator_state["responses"] = {
+        "convergence_analysis": _convergence_response(
+            agreements_reached=[{"topic": "Rollout pace", "shared_position": "Phased rollout."}],
+            remaining_unknowns=[
+                {
+                    "unknown": "Data residency law",
+                    "why_it_matters": "Determines legal custody model.",
+                    "evidence_needed": "Jurisdiction analysis.",
+                }
+            ],
+            human_judgement_required=[
+                {
+                    "issue": "Risk tolerance for vendor lock-in",
+                    "why_models_cannot_resolve_it": "A values tradeoff.",
+                }
+            ],
+        )
+    }
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    detail = client.get(f"/runs/{run_id}")
+    body = detail.text
+    assert "Agreements reached" in body
+    assert "Rollout pace" in body
+    assert "Remaining unknowns" in body
+    assert "Data residency law" in body
+    assert "Human judgement required" in body
+    assert "Risk tolerance for vendor lock-in" in body
+
+
+def test_ui_shows_no_material_changes_and_no_disagreements_explicitly(
+    client, service, fake_orchestrator_state
+):
+    fake_orchestrator_state["responses"] = {"convergence_analysis": _convergence_response()}
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    detail = client.get(f"/runs/{run_id}")
+    body = detail.text
+    assert "Convergence: Converged" in body
+    assert "No material position changes were identified." in body
+    assert "No unresolved disagreements were identified." in body
+
+
+def test_failed_convergence_analysis_offers_retry_and_skip(client, service, fake_orchestrator_state):
+    fake_orchestrator_state["fail"] = {"convergence_analysis"}
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    detail = client.get(f"/runs/{run_id}")
+    body = detail.text
+    assert "Retry failed stage" in body
+    assert "Skip convergence analysis and continue" in body
+    # convergence_analysis is not a Gemini-fallback stage -- it must not get
+    # the red_team-specific three-button UI.
+    assert "Retry preferred model" not in body
+    assert "Retry with fallback chain" not in body
+
+
+def test_skip_convergence_analysis_endpoint_marks_result_unavailable(
+    client, service, fake_orchestrator_state
+):
+    fake_orchestrator_state["fail"] = {"convergence_analysis"}
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+    assert service.get_run(run_id).status == "failed"
+
+    fake_orchestrator_state["log"].clear()
+    skip_response = client.post(f"/runs/{run_id}/stages/convergence_analysis/skip")
+    assert skip_response.status_code == 200
+
+    record = service.get_run(run_id)
+    assert record.status == "succeeded"
+    by_name = {s.name: s for s in record.stages}
+    assert by_name["convergence_analysis"].status == "skipped"
+
+    detail = client.get(f"/runs/{run_id}")
+    assert "Change/convergence analysis unavailable for this run." in detail.text
+
+
+def test_export_markdown_includes_decision_evolution_section(
+    client, service, fake_orchestrator_state
+):
+    fake_orchestrator_state["responses"] = {
+        "convergence_analysis": _convergence_response(
+            convergence="diverged",
+            unresolved_disagreements=[
+                {
+                    "topic": "Approach",
+                    "candidate_a_position": "A's stance",
+                    "candidate_b_position": "B's stance",
+                    "why_unresolved": "fundamental values difference",
+                    "decision_impact": "changes the recommendation entirely",
+                }
+            ],
+        )
+    }
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    export = client.get(f"/runs/{run_id}/export")
+    assert export.status_code == 200
+    assert "## Decision evolution" in export.text
+    assert "### Convergence" in export.text
+    assert "diverged" in export.text
+    assert "### Unresolved disagreements" in export.text
+    assert "Approach" in export.text
+    assert "fundamental values difference" in export.text
+    # The raw structured artifact is also present as its own section.
+    assert "## Convergence analysis (raw)" in export.text
+
+
+def test_export_markdown_states_unavailable_when_convergence_skipped(
+    client, service, fake_orchestrator_state
+):
+    fake_orchestrator_state["fail"] = {"convergence_analysis"}
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+    stage_id = next(
+        s.id for s in service.get_run(run_id).stages if s.name == "convergence_analysis"
+    )
+    import asyncio
+
+    asyncio.run(service.skip_stage(run_id, stage_id))
+
+    export = client.get(f"/runs/{run_id}/export")
+    assert export.status_code == 200
+    assert "Change/convergence analysis unavailable for this run." in export.text
+
+
+def test_historical_run_missing_convergence_analysis_opens_correctly_everywhere(
+    client, service, fake_orchestrator_state
+):
+    """Compatibility check: a run created before this stage existed (no
+    convergence_analysis row at all, not skipped/failed) must not crash the
+    run detail page, the Markdown export, or the history list, and must
+    show the neutral "unavailable" message rather than implying anything
+    about convergence."""
+    response = _submit(client, question="Q?", red_team=True)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+    assert service.get_run(run_id).status == "succeeded"
+
+    conv_stage = service.repo.get_stage(run_id, "convergence_analysis")
+    service.repo._conn.execute("DELETE FROM artifacts WHERE stage_id = ?", (conv_stage.id,))
+    service.repo._conn.execute("DELETE FROM stages WHERE id = ?", (conv_stage.id,))
+    service.repo._conn.commit()
+
+    detail = client.get(f"/runs/{run_id}")
+    assert detail.status_code == 200
+    assert "Change/convergence analysis unavailable for this run." in detail.text
+    assert "synthesis-output" in detail.text  # rest of the run still renders
+
+    export = client.get(f"/runs/{run_id}/export")
+    assert export.status_code == 200
+    assert "Change/convergence analysis unavailable for this run." in export.text
+
+    history = client.get("/history")
+    assert history.status_code == 200
+
+
+def test_historical_run_missing_convergence_analysis_shows_disabled_row_when_not_succeeded(
+    client, service, fake_orchestrator_state
+):
+    """Same historical-run scenario, but for a run still in the (non-
+    succeeded) pipeline view -- the stage must render as a disabled row,
+    the same treatment already used for a disabled red_team, not crash."""
+    fake_orchestrator_state["fail"] = {"revision_a"}
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+    assert service.get_run(run_id).status == "failed"
+
+    conv_stage = service.repo.get_stage(run_id, "convergence_analysis")
+    service.repo._conn.execute("DELETE FROM artifacts WHERE stage_id = ?", (conv_stage.id,))
+    service.repo._conn.execute("DELETE FROM stages WHERE id = ?", (conv_stage.id,))
+    service.repo._conn.commit()
+
+    detail = client.get(f"/runs/{run_id}")
+    assert detail.status_code == 200
+    assert "Retry failed stage" in detail.text  # revision_a's own failure UI

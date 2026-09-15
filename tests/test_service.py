@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 
@@ -48,7 +49,12 @@ def test_stage_persistence_after_successful_run(service):
 
     for stage in record.stages:
         assert stage.status == "succeeded"
-        assert stage.text == f"{stage.name}-output"
+        if stage.name == "convergence_analysis":
+            # Structured JSON, not the generic "{name}-output" fake text --
+            # see conftest.DEFAULT_CONVERGENCE_JSON.
+            assert stage.text is not None and stage.text.startswith("{")
+        else:
+            assert stage.text == f"{stage.name}-output"
         assert stage.provider == "Fake"
         assert stage.model == "fake-model"
         assert stage.input_tokens == 10
@@ -59,6 +65,7 @@ def test_stage_persistence_after_successful_run(service):
     result = service.to_run_result(run_id)
     assert result.synthesis.text == "synthesis-output"
     assert result.red_team is not None
+    assert result.convergence is not None
 
 
 def test_completed_stage_survives_later_failure(service, fake_orchestrator_state):
@@ -97,10 +104,14 @@ def test_retry_does_not_rerun_completed_unrelated_stages(service, fake_orchestra
     record = asyncio.run(service.retry_stage(run_id, "revision_a"))
 
     assert record.status == "succeeded"
-    # Only the retried stage and the newly-unblocked synthesis stage ran;
+    # Only the retried stage and the newly-unblocked downstream stages ran;
     # everything already succeeded (including sibling revision_b) was
     # skipped.
-    assert set(fake_orchestrator_state["log"]) == {"revision_a", "synthesis"}
+    assert set(fake_orchestrator_state["log"]) == {
+        "revision_a",
+        "convergence_analysis",
+        "synthesis",
+    }
     assert fake_orchestrator_state["log"].count("revision_a") == 1
     assert fake_orchestrator_state["log"].count("revision_b") == 0
 
@@ -230,12 +241,14 @@ def test_skip_red_team_continues_the_remaining_pipeline(service, fake_orchestrat
     assert record.status == "succeeded"
     by_name = {s.name: s for s in record.stages}
     assert by_name["red_team"].status == "skipped"
-    # Revision and synthesis proceeded without red-team, exactly like the
-    # red-team-disabled path -- and were not rerun beyond what was needed.
+    # Revision, convergence analysis, and synthesis proceeded without
+    # red-team, exactly like the red-team-disabled path -- and were not
+    # rerun beyond what was needed.
     assert "red_team" not in fake_orchestrator_state["log"]
     assert set(fake_orchestrator_state["log"]) == {
         "revision_a",
         "revision_b",
+        "convergence_analysis",
         "synthesis",
     }
 
@@ -300,3 +313,233 @@ def test_no_duplicate_rerun_of_already_successful_openai_anthropic_stages_after_
     # must not be re-run.
     for name in ("analysis_a", "analysis_b", "critique_a_of_b", "critique_b_of_a"):
         assert name not in fake_orchestrator_state["log"]
+
+
+# -- convergence_analysis stage -----------------------------------------
+
+
+def _convergence_json(**overrides) -> str:
+    payload = {
+        "convergence": "converged",
+        "material_changes": [],
+        "agreements_reached": [],
+        "unresolved_disagreements": [],
+        "remaining_unknowns": [],
+        "human_judgement_required": [],
+    }
+    payload.update(overrides)
+    return json.dumps(payload)
+
+
+def test_convergence_analysis_runs_only_after_both_revisions_succeed(
+    service, fake_orchestrator_state
+):
+    run_id = service.create_run("Q?", "economy", red_team_enabled=True)
+    record = asyncio.run(service.start_run(run_id))
+    assert record.status == "succeeded"
+
+    log = fake_orchestrator_state["log"]
+    assert log.index("convergence_analysis") > log.index("revision_a")
+    assert log.index("convergence_analysis") > log.index("revision_b")
+
+
+def test_synthesis_does_not_start_before_convergence_analysis_resolves(
+    service, fake_orchestrator_state
+):
+    run_id = service.create_run("Q?", "economy", red_team_enabled=True)
+    record = asyncio.run(service.start_run(run_id))
+    assert record.status == "succeeded"
+
+    log = fake_orchestrator_state["log"]
+    assert log.index("synthesis") > log.index("convergence_analysis")
+
+
+@pytest.mark.parametrize(
+    "level", ["converged", "partial", "diverged", "insufficient_information"]
+)
+def test_each_convergence_level_is_persisted_correctly(service, fake_orchestrator_state, level):
+    fake_orchestrator_state["responses"] = {
+        "convergence_analysis": {"text": _convergence_json(convergence=level)}
+    }
+    run_id = service.create_run("Q?", "economy", red_team_enabled=False)
+    record = asyncio.run(service.start_run(run_id))
+
+    assert record.status == "succeeded"
+    result = service.to_run_result(run_id)
+    assert result.convergence is not None
+    stored = json.loads(result.convergence.text)
+    assert stored["convergence"] == level
+
+
+def test_material_change_is_persisted_correctly(service, fake_orchestrator_state):
+    fake_orchestrator_state["responses"] = {
+        "convergence_analysis": {
+            "text": _convergence_json(
+                convergence="partial",
+                material_changes=[
+                    {
+                        "candidate": "A",
+                        "before": "Vendor-hosted preferred.",
+                        "after": "Customer-controlled preferred.",
+                        "material": True,
+                        "triggers": [
+                            {
+                                "source": "peer_critique",
+                                "stage": "critique_b_of_a",
+                                "summary": "B raised a custody risk.",
+                            }
+                        ],
+                    }
+                ],
+            )
+        }
+    }
+    run_id = service.create_run("Q?", "economy", red_team_enabled=False)
+    asyncio.run(service.start_run(run_id))
+
+    result = service.to_run_result(run_id)
+    stored = json.loads(result.convergence.text)
+    change = stored["material_changes"][0]
+    assert change["candidate"] == "A"
+    assert change["before"] == "Vendor-hosted preferred."
+    assert change["after"] == "Customer-controlled preferred."
+    assert change["material"] is True
+    assert change["triggers"][0]["stage"] == "critique_b_of_a"
+
+
+def test_no_change_case_is_represented_explicitly(service, fake_orchestrator_state):
+    fake_orchestrator_state["responses"] = {
+        "convergence_analysis": {
+            "text": _convergence_json(
+                convergence="converged",
+                material_changes=[
+                    {
+                        "candidate": "A",
+                        "before": "Phased rollout.",
+                        "after": "Phased rollout.",
+                        "material": False,
+                        "triggers": [],
+                    }
+                ],
+            )
+        }
+    }
+    run_id = service.create_run("Q?", "economy", red_team_enabled=False)
+    asyncio.run(service.start_run(run_id))
+
+    result = service.to_run_result(run_id)
+    stored = json.loads(result.convergence.text)
+    assert stored["material_changes"][0]["material"] is False
+
+
+def test_convergence_failure_persists_earlier_stages_and_is_independently_retryable(
+    service, fake_orchestrator_state
+):
+    fake_orchestrator_state["fail"] = {"convergence_analysis"}
+    run_id = service.create_run("Q?", "economy", red_team_enabled=True)
+    record = asyncio.run(service.start_run(run_id))
+
+    assert record.status == "failed"
+    by_name = {s.name: s for s in record.stages}
+    for name in (
+        "analysis_a",
+        "analysis_b",
+        "critique_a_of_b",
+        "critique_b_of_a",
+        "red_team",
+        "revision_a",
+        "revision_b",
+    ):
+        assert by_name[name].status == "succeeded"
+    assert by_name["convergence_analysis"].status == "failed"
+    assert by_name["synthesis"].status == "pending"
+
+    # Retry only reruns convergence_analysis and the synthesis it unblocks --
+    # not revisions or anything earlier.
+    fake_orchestrator_state["log"].clear()
+    fake_orchestrator_state["fail"] = set()
+    convergence_stage_id = by_name["convergence_analysis"].id
+    record = asyncio.run(service.retry_stage(run_id, convergence_stage_id))
+
+    assert record.status == "succeeded"
+    assert set(fake_orchestrator_state["log"]) == {"convergence_analysis", "synthesis"}
+
+
+def test_skip_convergence_analysis_allows_synthesis_but_marks_it_unavailable(
+    service, fake_orchestrator_state
+):
+    fake_orchestrator_state["fail"] = {"convergence_analysis"}
+    run_id = service.create_run("Q?", "economy", red_team_enabled=False)
+    record = asyncio.run(service.start_run(run_id))
+    assert record.status == "failed"
+
+    stage_id = next(s.id for s in record.stages if s.name == "convergence_analysis")
+    fake_orchestrator_state["log"].clear()
+    record = asyncio.run(service.skip_stage(run_id, stage_id))
+
+    assert record.status == "succeeded"
+    by_name = {s.name: s for s in record.stages}
+    assert by_name["convergence_analysis"].status == "skipped"
+    assert "convergence_analysis" not in fake_orchestrator_state["log"]
+    assert "synthesis" in fake_orchestrator_state["log"]
+
+    result = service.to_run_result(run_id)
+    assert result.convergence is None
+
+
+def test_convergence_analysis_cost_is_included_in_run_total(service, fake_orchestrator_state):
+    fake_orchestrator_state["responses"] = {
+        "convergence_analysis": {"text": _convergence_json(), "estimated_cost_usd": 0.0234}
+    }
+    run_id = service.create_run("Q?", "economy", red_team_enabled=True)
+    record = asyncio.run(service.start_run(run_id))
+
+    assert record.status == "succeeded"
+    other_stage_count = len(ALL_STAGE_NAMES) - 1  # every stage but convergence_analysis
+    expected = 0.001 * other_stage_count + 0.0234
+    assert record.estimated_total_cost_usd == pytest.approx(expected)
+
+    result = service.to_run_result(run_id)
+    assert result.estimated_total_cost_usd == pytest.approx(expected)
+
+
+def test_red_team_disabled_runs_still_support_convergence_analysis(
+    service, fake_orchestrator_state
+):
+    run_id = service.create_run("Q?", "economy", red_team_enabled=False)
+    record = asyncio.run(service.start_run(run_id))
+
+    assert record.status == "succeeded"
+    stage_names = {s.name for s in record.stages}
+    assert "convergence_analysis" in stage_names
+    assert "red_team" not in stage_names
+
+    result = service.to_run_result(run_id)
+    assert result.convergence is not None
+    assert result.red_team is None
+
+
+def test_historical_run_missing_convergence_analysis_stage_opens_correctly(
+    service, fake_orchestrator_state
+):
+    """A run created before this stage existed has no convergence_analysis
+    row at all (not "failed", not "skipped" -- structurally absent, since
+    there is no schema migration that retroactively inserts stage rows for
+    old runs). Everything reading such a run must degrade gracefully."""
+    run_id = service.create_run("Q?", "economy", red_team_enabled=True)
+    record = asyncio.run(service.start_run(run_id))
+    assert record.status == "succeeded"
+
+    conv_stage = service.repo.get_stage(run_id, "convergence_analysis")
+    service.repo._conn.execute("DELETE FROM artifacts WHERE stage_id = ?", (conv_stage.id,))
+    service.repo._conn.execute("DELETE FROM stages WHERE id = ?", (conv_stage.id,))
+    service.repo._conn.commit()
+
+    record = service.get_run(run_id)
+    assert all(s.name != "convergence_analysis" for s in record.stages)
+
+    result = service.to_run_result(run_id)
+    assert result.convergence is None
+    # Every other stage is unaffected.
+    assert result.synthesis.text == "synthesis-output"
+    assert result.revision_a.text == "revision_a-output"

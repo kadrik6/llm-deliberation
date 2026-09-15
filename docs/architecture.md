@@ -56,6 +56,10 @@ analysis_a      analysis_b        (independent -- see ADR 001)
                  │              │
                  └──────┬───────┘
                         ▼
+              convergence_analysis        (meta-analysis, not a
+              (Anthropic by default)       recommendation -- see ADR 006)
+                        │
+                        ▼
                     synthesis
                     (OpenAI)
                         │
@@ -64,14 +68,15 @@ analysis_a      analysis_b        (independent -- see ADR 001)
               + optional Markdown export
 ```
 
-Stages are grouped into four "waves" that can run concurrently within a
+Stages are grouped into five "waves" that can run concurrently within a
 wave but not across waves (`src/llm_deliberation/orchestrator.py`,
 `WAVES`):
 
 1. `analysis_a`, `analysis_b`
 2. `critique_a_of_b`, `critique_b_of_a`, `red_team` (if enabled)
 3. `revision_a`, `revision_b`
-4. `synthesis`
+4. `convergence_analysis`
+5. `synthesis`
 
 `DeliberationService._execute` walks these waves in order. A stage whose
 status is already `"succeeded"` is skipped and its stored text is reused
@@ -96,9 +101,11 @@ tables:
   array of every attempt made across the whole fallback chain, kept even
   when the stage ultimately fails, since these fields are populated on
   both `mark_stage_succeeded` and `mark_stage_failed`). `skipped` is
-  distinct from `failed`: it is the optional red-team stage's "user
-  explicitly chose to continue without it" state, and is treated like a
-  disabled red-team stage by downstream waves -- not a run failure.
+  distinct from `failed`: it is the state of an optional stage
+  (`orchestrator.SKIPPABLE_STAGE_NAMES` -- currently `red_team` and
+  `convergence_analysis`) after a user explicitly chose to continue
+  without it, and is treated like a disabled/absent stage by downstream
+  waves -- not a run failure.
 - **`artifacts`** -- the actual generated text for each successful stage,
   written in the same transaction as the stage being marked
   `"succeeded"`.
@@ -137,6 +144,44 @@ collapse it into a single error string. See
 Model selection is profile-based (`economy` / `balanced` / `max`,
 `config.py`), not exposed as raw per-call model picking in the primary UI
 -- see the README's "Profiles" section for why.
+
+## Convergence analysis
+
+`convergence_analysis` (`src/llm_deliberation/convergence.py`) is a durable
+stage, not part of the final synthesis prompt: after both revisions
+succeed, a separate model call compares each candidate's original analysis
+to its revision, and the two revisions to each other, and returns one
+validated JSON object (`ConvergenceAnalysis`, a Pydantic model) describing
+material position changes, what appears to have triggered them, agreements
+reached, disagreements that remain, and what would be needed to resolve
+them. It never produces a recommendation.
+
+No provider-specific structured-output/tool-calling API is used. The
+prompt embeds `ConvergenceAnalysis.model_json_schema()` (generated from the
+model itself, so it can't drift out of sync) and asks for one bare JSON
+object; the orchestrator parses and validates whatever text comes back
+(`convergence.parse_convergence_analysis`) before persisting it -- a
+response that doesn't parse or doesn't match the schema fails the stage,
+exactly like any other provider error, rather than persisting malformed
+analytical data. The canonical, pretty-printed JSON *is* the stage's
+stored artifact text; no new table or columns exist for it.
+
+Provider/model choice (`Settings.convergence_provider` /
+`convergence_model`, env `CONVERGENCE_PROVIDER` / `CONVERGENCE_MODEL`)
+defaults to Anthropic -- deliberately different from the final
+synthesizer (OpenAI), and not Gemini, since that would silently require
+`GEMINI_API_KEY` even with red-team disabled. See
+[ADR 006](decisions/006-explicit-convergence-analysis.md) for the full
+reasoning, including why this is disclosed as model-generated analytical
+metadata, not a ground-truth judgement.
+
+`convergence_analysis` is in `orchestrator.SKIPPABLE_STAGE_NAMES`: if it
+exhausts retries, the run offers "Retry failed stage" / "Skip convergence
+analysis and continue" (the web UI's generalization of the red-team retry/
+skip actions -- see ADR 005). Skipping it lets synthesis continue exactly
+as if the stage were absent; the run detail page, Markdown export, and the
+synthesis prompt itself all say so explicitly rather than silently
+proceeding as if nothing were missing.
 
 ## Web layer
 

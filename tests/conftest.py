@@ -1,8 +1,27 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from llm_deliberation.types import ModelResponse, Usage
+
+# A minimal, schema-valid convergence_analysis payload. Every test that lets
+# a run reach "succeeded" exercises this stage, so the fake needs a
+# realistic default -- unlike every other stage's plain "{stage}-output"
+# text, convergence_analysis's stored artifact must be parseable JSON (see
+# llm_deliberation.convergence.ConvergenceAnalysis). Override per-test via
+# fake_orchestrator_state["responses"]["convergence_analysis"].
+DEFAULT_CONVERGENCE_JSON = json.dumps(
+    {
+        "convergence": "converged",
+        "material_changes": [],
+        "agreements_reached": [],
+        "unresolved_disagreements": [],
+        "remaining_unknowns": [],
+        "human_judgement_required": [],
+    }
+)
 
 
 class FakeOrchestrator:
@@ -46,10 +65,11 @@ class FakeOrchestrator:
             raise RuntimeError(f"simulated failure in stage '{stage}'")
 
         overrides = self._state.get("responses", {}).get(stage, {})
+        default_text = DEFAULT_CONVERGENCE_JSON if stage == "convergence_analysis" else f"{stage}-output"
         defaults = dict(
             provider="Fake",
             model="fake-model",
-            text=f"{stage}-output",
+            text=default_text,
             usage=Usage(input_tokens=10, output_tokens=20),
             estimated_cost_usd=0.001,
             requested_model="fake-model",

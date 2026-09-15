@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from llm_deliberation.orchestrator import SKIPPABLE_STAGE_NAMES
 from llm_deliberation.store import RunRecord, StageRecord
 
 STATUS_SYMBOLS: dict[str, str] = {
@@ -24,12 +25,15 @@ STAGE_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     ),
     ("Red-team", (("red_team", "Gemini"),)),
     ("Revision", (("revision_a", "Candidate A"), ("revision_b", "Candidate B"))),
+    ("Convergence analysis", (("convergence_analysis", "Meta-analysis"),)),
     ("Final synthesis", (("synthesis", "Synthesis"),)),
 )
 
 # (stage_name, section_title) for the expandable artifact sections shown once
 # a run has succeeded. Synthesis is shown separately as the dominant "final
-# answer", so it is intentionally excluded here.
+# answer", so it is intentionally excluded here. convergence_analysis's raw
+# artifact is structured JSON, not prose -- see result.html, which renders
+# it in a <pre> rather than through the Markdown pipeline.
 ARTIFACT_SECTIONS: tuple[tuple[str, str], ...] = (
     ("analysis_a", "Independent analysis A"),
     ("analysis_b", "Independent analysis B"),
@@ -38,7 +42,15 @@ ARTIFACT_SECTIONS: tuple[tuple[str, str], ...] = (
     ("red_team", "Independent red-team"),
     ("revision_a", "Revised candidate A"),
     ("revision_b", "Revised candidate B"),
+    ("convergence_analysis", "Convergence analysis (raw)"),
 )
+
+# Skip-button label per skippable stage (see SKIPPABLE_STAGE_NAMES). Stages
+# not listed here never show a skip button at all.
+_SKIP_LABELS: dict[str, str] = {
+    "red_team": "Skip red-team and continue",
+    "convergence_analysis": "Skip convergence analysis and continue",
+}
 
 PROFILE_ORDER: tuple[str, ...] = ("economy", "balanced", "max")
 PROFILE_BLURBS: dict[str, str] = {
@@ -123,10 +135,15 @@ def build_pipeline(record: RunRecord) -> list[dict]:
                     "fallback_reason": stage.fallback_reason,
                     "model_attempts": stage.model_attempts,
                     "running_note": running_note,
-                    # Only the optional red-team stage offers "retry
-                    # preferred model" / "retry fallback chain" / "skip" --
-                    # every other stage keeps the single generic retry.
-                    "skippable": name == "red_team" and stage.status == "failed",
+                    # A skippable, failed stage gets a "Retry" + "Skip"
+                    # pair instead of the single generic retry button.
+                    # red_team additionally has a Gemini fallback chain, so
+                    # it gets three buttons (retry preferred / retry chain /
+                    # skip) instead of the generic pair -- see
+                    # fallback_chain_retry below.
+                    "skippable": name in SKIPPABLE_STAGE_NAMES and stage.status == "failed",
+                    "fallback_chain_retry": name == "red_team",
+                    "skip_label": _SKIP_LABELS.get(name, "Skip and continue"),
                 }
             )
         groups.append({"title": title, "rows": rows})

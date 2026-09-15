@@ -1,0 +1,73 @@
+<section class="decision-evolution">
+  <h2>Decision evolution</h2>
+  {% if evolution is none %}
+    <p class="stage-note">Change/convergence analysis unavailable for this run.</p>
+  {% else %}
+    <p class="convergence-badge convergence-{{ evolution.convergence|replace('_', '-') }}">
+      Convergence: {{ evolution.convergence|replace('_', ' ')|capitalize }}
+    </p>
+
+    <h3>What changed</h3>
+    {% if evolution.material_changes %}
+      {% for change in evolution.material_changes %}
+        <div class="change-card">
+          <p class="change-candidate">Candidate {{ change.candidate }}</p>
+          <p><strong>Before:</strong> {{ change.before }}</p>
+          <p><strong>After:</strong> {{ change.after }}</p>
+          <p><strong>Material change:</strong> {{ "Yes" if change.material else "No" }}</p>
+          {% if change.triggers %}
+            <p><strong>Trigger{{ "s" if change.triggers|length > 1 else "" }}:</strong>
+              {%- for t in change.triggers %}
+                {{ t.summary }}{% if t.source == "uncertain" %} (cause uncertain){% endif %}{% if not loop.last %};{% endif %}
+              {%- endfor %}
+            </p>
+          {% endif %}
+        </div>
+      {% endfor %}
+    {% else %}
+      <p class="stage-note">No material position changes were identified.</p>
+    {% endif %}
+
+    <h3>Where they still disagree</h3>
+    {% if evolution.unresolved_disagreements %}
+      {% for d in evolution.unresolved_disagreements %}
+        <div class="disagreement-card">
+          <p class="disagreement-topic">{{ d.topic }}</p>
+          <p><strong>Candidate A:</strong> {{ d.candidate_a_position }}</p>
+          <p><strong>Candidate B:</strong> {{ d.candidate_b_position }}</p>
+          <p><strong>Why unresolved:</strong> {{ d.why_unresolved }}</p>
+          <p><strong>Decision impact:</strong> {{ d.decision_impact }}</p>
+        </div>
+      {% endfor %}
+    {% else %}
+      <p class="stage-note">No unresolved disagreements were identified.</p>
+    {% endif %}
+
+    {% if evolution.agreements_reached %}
+      <h3>Agreements reached</h3>
+      <ul>
+        {% for a in evolution.agreements_reached %}
+          <li><strong>{{ a.topic }}:</strong> {{ a.shared_position }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
+    {% if evolution.remaining_unknowns %}
+      <h3>Remaining unknowns</h3>
+      <ul>
+        {% for u in evolution.remaining_unknowns %}
+          <li><strong>{{ u.unknown }}</strong> — {{ u.why_it_matters }} (evidence needed: {{ u.evidence_needed }})</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
+    {% if evolution.human_judgement_required %}
+      <h3>Human judgement required</h3>
+      <ul>
+        {% for h in evolution.human_judgement_required %}
+          <li><strong>{{ h.issue }}:</strong> {{ h.why_models_cannot_resolve_it }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  {% endif %}
+</section>

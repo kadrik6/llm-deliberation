@@ -6,7 +6,12 @@ import uuid
 from pathlib import Path
 
 from llm_deliberation.config import PROFILES, Settings, default_red_team_enabled
-from llm_deliberation.orchestrator import ALL_STAGE_NAMES, WAVES, DeliberationOrchestrator
+from llm_deliberation.orchestrator import (
+    ALL_STAGE_NAMES,
+    SKIPPABLE_STAGE_NAMES,
+    WAVES,
+    DeliberationOrchestrator,
+)
 from llm_deliberation.providers import ProviderGenerationError
 from llm_deliberation.store import DEFAULT_DB_PATH, Repository, RunRecord, utc_now_iso
 from llm_deliberation.types import ModelResponse, RunResult, Usage
@@ -104,12 +109,9 @@ class DeliberationService:
                 attempt_log=stage.attempt_log,
             )
 
-        red_stage = stages.get("red_team")
-        red_team = (
-            response("red_team")
-            if red_stage is not None and red_stage.status == "succeeded"
-            else None
-        )
+        def optional_response(name: str) -> ModelResponse | None:
+            stage = stages.get(name)
+            return response(name) if stage is not None and stage.status == "succeeded" else None
 
         return RunResult(
             question=record.question,
@@ -119,9 +121,10 @@ class DeliberationService:
             analysis_b=response("analysis_b"),
             critique_a_of_b=response("critique_a_of_b"),
             critique_b_of_a=response("critique_b_of_a"),
-            red_team=red_team,
+            red_team=optional_response("red_team"),
             revision_a=response("revision_a"),
             revision_b=response("revision_b"),
+            convergence=optional_response("convergence_analysis"),
             synthesis=response("synthesis"),
             context=record.context,
         )
@@ -163,25 +166,29 @@ class DeliberationService:
         return await self._execute(run_id, gemini_mode=gemini_mode)
 
     async def skip_stage(self, run_id: str, stage_id: int | str) -> RunRecord:
-        """Skip the optional red-team stage and let the rest of the run continue.
+        """Skip an optional stage and let the rest of the run continue.
 
-        Only ever applies to red_team: it is the only stage the pipeline
-        treats as optional (it can already be entirely disabled up front).
-        Skipping after a failure reuses that same "absent, not an error"
-        handling -- revision/synthesis proceed without a red-team report,
-        exactly as when red-team was disabled from the start.
+        Only applies to SKIPPABLE_STAGE_NAMES (red_team, convergence_analysis)
+        -- the stages the pipeline treats as optional after a failure (red_team
+        can also be disabled entirely up front). Skipping reuses the same
+        "absent, not an error" handling downstream stages already tolerate:
+        revision/synthesis proceed without a red-team report, and synthesis
+        proceeds without convergence context, exactly as if that stage had
+        never been enabled.
         """
         stage = self.repo.get_stage(run_id, stage_id)
-        if stage.name != "red_team":
-            raise ValueError("Only the optional red_team stage can be skipped.")
+        if stage.name not in SKIPPABLE_STAGE_NAMES:
+            raise ValueError(f"Stage '{stage.name}' cannot be skipped.")
         if stage.status == "succeeded":
             raise ValueError(
                 f"Stage '{stage.name}' on run {run_id} already succeeded; nothing to skip."
             )
-        self.repo.mark_stage_skipped(
-            stage.id,
-            reason="Skipped by user after the Gemini red-team stage could not complete.",
+        reason = (
+            "Skipped by user after the Gemini red-team stage could not complete."
+            if stage.name == "red_team"
+            else "Skipped by user after convergence analysis could not complete."
         )
+        self.repo.mark_stage_skipped(stage.id, reason=reason)
         self.repo.update_run(run_id, status="running", set_started_if_unset=True)
         return await self._execute(run_id)
 
