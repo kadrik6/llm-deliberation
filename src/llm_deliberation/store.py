@@ -52,6 +52,12 @@ class RunRecord:
     started_at: str | None
     completed_at: str | None
     estimated_total_cost_usd: float
+    # Output/content language for every user-facing generated stage in this
+    # run ("en" | "et") -- distinct from, and never conflated with, a web
+    # viewer's UI-chrome language preference (see web/i18n.py). Runs created
+    # before this field existed are migrated to "en" (see
+    # _RUN_MIGRATION_COLUMNS), never inferred from their stored content.
+    language: str = "en"
     stages: list[StageRecord] = field(default_factory=list)
 
 
@@ -66,7 +72,8 @@ CREATE TABLE IF NOT EXISTS runs (
     created_at TEXT NOT NULL,
     started_at TEXT,
     completed_at TEXT,
-    estimated_total_cost_usd REAL NOT NULL DEFAULT 0.0
+    estimated_total_cost_usd REAL NOT NULL DEFAULT 0.0,
+    language TEXT NOT NULL DEFAULT 'en'
 );
 
 CREATE TABLE IF NOT EXISTS stages (
@@ -116,6 +123,12 @@ _STAGE_MIGRATION_COLUMNS: dict[str, str] = {
     "attempt_log": "TEXT",
 }
 
+# A run created before bilingual support existed gets "en" -- a stated,
+# backward-compatible default, never inferred from its stored content.
+_RUN_MIGRATION_COLUMNS: dict[str, str] = {
+    "language": "TEXT NOT NULL DEFAULT 'en'",
+}
+
 
 class Repository:
     """SQLite-backed persistence for runs, stages, and artifacts.
@@ -132,6 +145,7 @@ class Repository:
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.executescript(SCHEMA)
         self._migrate_stage_columns()
+        self._migrate_run_columns()
         self._conn.commit()
 
     def _migrate_stage_columns(self) -> None:
@@ -139,6 +153,12 @@ class Repository:
         for column, declaration in _STAGE_MIGRATION_COLUMNS.items():
             if column not in existing:
                 self._conn.execute(f"ALTER TABLE stages ADD COLUMN {column} {declaration}")
+
+    def _migrate_run_columns(self) -> None:
+        existing = {row["name"] for row in self._conn.execute("PRAGMA table_info(runs)")}
+        for column, declaration in _RUN_MIGRATION_COLUMNS.items():
+            if column not in existing:
+                self._conn.execute(f"ALTER TABLE runs ADD COLUMN {column} {declaration}")
 
     def close(self) -> None:
         self._conn.close()
@@ -153,13 +173,14 @@ class Repository:
         context: str | None,
         profile: str,
         red_team_enabled: bool,
+        language: str = "en",
     ) -> None:
         self._conn.execute(
             "INSERT INTO runs "
             "(id, question, context, profile, red_team_enabled, status, "
-            "created_at, estimated_total_cost_usd) "
-            "VALUES (?, ?, ?, ?, ?, 'pending', ?, 0.0)",
-            (run_id, question, context, profile, int(red_team_enabled), utc_now_iso()),
+            "created_at, estimated_total_cost_usd, language) "
+            "VALUES (?, ?, ?, ?, ?, 'pending', ?, 0.0, ?)",
+            (run_id, question, context, profile, int(red_team_enabled), utc_now_iso(), language),
         )
         self._conn.commit()
 
@@ -237,6 +258,7 @@ class Repository:
             started_at=row["started_at"],
             completed_at=row["completed_at"],
             estimated_total_cost_usd=row["estimated_total_cost_usd"],
+            language=row["language"],
         )
 
     # -- stages ------------------------------------------------------

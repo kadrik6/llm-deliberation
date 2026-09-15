@@ -543,3 +543,144 @@ def test_historical_run_missing_convergence_analysis_stage_opens_correctly(
     # Every other stage is unaffected.
     assert result.synthesis.text == "synthesis-output"
     assert result.revision_a.text == "revision_a-output"
+
+
+# -- bilingual support (run/output language) -----------------------------
+
+
+def test_new_run_defaults_to_english_for_backward_compatibility(service):
+    run_id = service.create_run("Q?", "economy", red_team_enabled=False)
+    record = service.get_run(run_id)
+    assert record.language == "en"
+
+
+def test_estonian_run_persists_et(service):
+    run_id = service.create_run("Q?", "economy", red_team_enabled=False, language="et")
+    record = service.get_run(run_id)
+    assert record.language == "et"
+
+
+def test_english_run_persists_en(service):
+    run_id = service.create_run("Q?", "economy", red_team_enabled=False, language="en")
+    record = service.get_run(run_id)
+    assert record.language == "en"
+
+
+def test_unsupported_language_is_rejected(service):
+    with pytest.raises(ValueError):
+        service.create_run("Q?", "economy", red_team_enabled=False, language="fr")
+
+
+def test_language_survives_retry(service, fake_orchestrator_state):
+    fake_orchestrator_state["fail"] = {"revision_a"}
+    run_id = service.create_run("Q?", "economy", red_team_enabled=False, language="et")
+    asyncio.run(service.start_run(run_id))
+    assert service.get_run(run_id).status == "failed"
+
+    fake_orchestrator_state["fail"] = set()
+    record = asyncio.run(service.retry_stage(run_id, "revision_a"))
+    assert record.status == "succeeded"
+    assert record.language == "et"
+
+
+def test_language_survives_resume(service, fake_orchestrator_state):
+    fake_orchestrator_state["fail"] = {"revision_a"}
+    run_id = service.create_run("Q?", "economy", red_team_enabled=False, language="et")
+    asyncio.run(service.start_run(run_id))
+    assert service.get_run(run_id).status == "failed"
+
+    fake_orchestrator_state["fail"] = set()
+    record = asyncio.run(service.resume_run(run_id))
+    assert record.status == "succeeded"
+    assert record.language == "et"
+
+
+def test_historical_run_without_language_column_loads_with_english_default(
+    service, fake_orchestrator_state
+):
+    """Simulates a genuinely pre-migration row: language column present
+    (SQLite can't easily drop it back out) but let's instead confirm the
+    migration default applies by constructing a fresh Repository directly
+    against a bare, pre-bilingual-support schema."""
+    import sqlite3
+    import tempfile
+
+    from llm_deliberation.store import Repository
+
+    db_path = tempfile.mktemp(suffix=".db")
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE runs (
+            id TEXT PRIMARY KEY,
+            question TEXT NOT NULL,
+            context TEXT,
+            profile TEXT NOT NULL,
+            red_team_enabled INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            started_at TEXT,
+            completed_at TEXT,
+            estimated_total_cost_usd REAL NOT NULL DEFAULT 0.0
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO runs (id, question, context, profile, red_team_enabled, status, "
+        "created_at, estimated_total_cost_usd) VALUES "
+        "('old1', 'Old question?', NULL, 'economy', 0, 'succeeded', '2025-01-01T00:00:00', 0.01)"
+    )
+    conn.commit()
+    conn.close()
+
+    repo = Repository(db_path)
+    record = repo.get_run("old1")
+    assert record.language == "en"
+    assert record.question == "Old question?"
+    repo.close()
+
+
+def test_original_question_is_not_translated_or_rewritten(service, fake_orchestrator_state):
+    original_question = "Kas peaksime selle süsteemi ise ehitama või sisse ostma?"
+    run_id = service.create_run(
+        original_question, "economy", red_team_enabled=False, language="en"
+    )
+    record = asyncio.run(service.start_run(run_id))
+    assert record.status == "succeeded"
+    assert record.question == original_question
+
+    result = service.to_run_result(run_id)
+    assert result.question == original_question
+
+
+@pytest.mark.parametrize("language", ["en", "et"])
+def test_output_language_reaches_every_user_facing_stage(
+    service, fake_orchestrator_state, language
+):
+    run_id = service.create_run("Q?", "economy", red_team_enabled=True, language=language)
+    record = asyncio.run(service.start_run(run_id))
+    assert record.status == "succeeded"
+
+    languages_used = dict(fake_orchestrator_state["languages"])
+    for stage in (
+        "analysis_a",
+        "analysis_b",
+        "critique_a_of_b",
+        "critique_b_of_a",
+        "red_team",
+        "revision_a",
+        "revision_b",
+        "convergence_analysis",
+        "synthesis",
+    ):
+        assert languages_used[stage] == language
+
+
+def test_no_additional_deliberation_stage_was_introduced_for_bilingual_support(
+    service, fake_orchestrator_state
+):
+    run_id = service.create_run("Q?", "economy", red_team_enabled=True, language="et")
+    record = asyncio.run(service.start_run(run_id))
+    assert record.status == "succeeded"
+    assert set(fake_orchestrator_state["log"]) == set(ALL_STAGE_NAMES)
+    assert len(fake_orchestrator_state["log"]) == len(ALL_STAGE_NAMES)

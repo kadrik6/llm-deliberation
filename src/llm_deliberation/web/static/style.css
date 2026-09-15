@@ -49,6 +49,25 @@ body {
 
 .topbar nav a:hover { color: var(--text); }
 
+/* UI-chrome language switch (see web/i18n.py) -- a plain cookie set via a
+   GET link, deliberately small and visually secondary to navigation. Never
+   affects a run's own output language. */
+.lang-switch {
+  margin-left: 1.25rem;
+  padding-left: 1.25rem;
+  border-left: 1px solid var(--border);
+}
+.lang-switch a {
+  margin-left: 0.4rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.lang-switch a:first-child { margin-left: 0; }
+.lang-switch a.active { color: var(--accent); }
+.lang-switch a:hover { color: var(--text); }
+
 main {
   max-width: 760px;
   margin: 0 auto;
@@ -372,6 +391,15 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   background: var(--bg);
   padding: 0.9rem 1.1rem;
   margin-bottom: 1.1rem;
+}
+
+.decision-snapshot-label {
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin: 0 0 0.5rem;
 }
 
 .snapshot-counts {

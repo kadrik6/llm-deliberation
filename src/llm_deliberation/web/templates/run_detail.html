@@ -1,18 +1,19 @@
 {% extends "base.html" %}
-{% block title %}Run {{ record.id }}{% endblock %}
+{% block title %}{{ "deliberation_heading"|t }} {{ record.id }}{% endblock %}
 {% block content %}
 <div class="run-meta">
-  <h1>Deliberation</h1>
-  <p class="question-text"><strong>Question:</strong> {{ record.question }}</p>
+  <h1>{{ "deliberation_heading"|t }}</h1>
+  <p class="question-text"><strong>{{ "question_meta_label"|t }}</strong> {{ record.question }}</p>
   {% if record.context %}
-  <p class="context-text"><strong>Context:</strong> {{ record.context }}</p>
+  <p class="context-text"><strong>{{ "context_meta_label"|t }}</strong> {{ record.context }}</p>
   {% endif %}
   <div class="meta-row">
-    <span>Run ID: <code>{{ record.id }}</code></span>
-    <span>Profile: {{ record.profile }}</span>
-    <span>Red-team: {{ "on" if record.red_team_enabled else "off" }}</span>
-    <span>Elapsed: {{ elapsed }}</span>
-    <span>Cost: {{ cost }}</span>
+    <span>{{ "run_id_label"|t }}: <code>{{ record.id }}</code></span>
+    <span>{{ "profile_meta_label"|t }}: {{ record.profile }}</span>
+    <span>{{ "language_meta_label"|t }}: {{ language_native_name }}</span>
+    <span>{{ "red_team_meta_label"|t }}: {{ "red_team_on"|t if record.red_team_enabled else "red_team_off"|t }}</span>
+    <span>{{ "elapsed_label"|t }}: {{ elapsed }}</span>
+    <span>{{ "cost_meta_label"|t }}: {{ cost }}</span>
   </div>
 </div>
 

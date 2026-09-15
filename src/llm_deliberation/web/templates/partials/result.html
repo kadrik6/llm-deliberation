@@ -1,36 +1,31 @@
 <section class="final-answer">
-  <h2>Final answer</h2>
+  <h2>{{ "final_answer_heading"|t }}</h2>
 
-  {% set convergence_labels = {
-    "converged": "Full convergence",
-    "partial": "Partial convergence",
-    "diverged": "Diverged",
-    "insufficient_information": "Insufficient information",
-  } %}
   <div class="decision-snapshot">
+    <p class="decision-snapshot-label">{{ "decision_snapshot_label"|t }}</p>
     {% if evolution is none %}
-      <p class="convergence-badge convergence-unavailable">Convergence analysis unavailable</p>
-      <p class="stage-note">Change/convergence analysis unavailable for this run.</p>
+      <p class="convergence-badge convergence-unavailable">{{ "convergence_unavailable_badge"|t }}</p>
+      <p class="stage-note">{{ "convergence_unavailable_message"|t }}</p>
     {% else %}
       <p class="convergence-badge convergence-{{ evolution.convergence|replace('_', '-') }}">
-        {{ convergence_labels.get(evolution.convergence, evolution.convergence|replace('_', ' ')|capitalize) }}
+        {{ ("convergence_" ~ evolution.convergence)|t }}
       </p>
       <ul class="snapshot-counts">
         {% set material_count = evolution.material_changes|selectattr("material")|list|length %}
-        <li><strong>{{ material_count }}</strong> material change{{ "s" if material_count != 1 else "" }}</li>
+        <li><strong>{{ material_count|count_label("material_change") }}</strong></li>
         {% set disagreement_count = evolution.unresolved_disagreements|length %}
-        <li><strong>{{ disagreement_count }}</strong> unresolved disagreement{{ "s" if disagreement_count != 1 else "" }}</li>
+        <li><strong>{{ disagreement_count|count_label("unresolved_disagreement") }}</strong></li>
         {% set unknown_count = evolution.remaining_unknowns|length %}
-        <li><strong>{{ unknown_count }}</strong> missing fact{{ "s" if unknown_count != 1 else "" }}</li>
+        <li><strong>{{ unknown_count|count_label("missing_fact") }}</strong></li>
         {% set judgement_count = evolution.human_judgement_required|length %}
-        <li><strong>{{ judgement_count }}</strong> human judgement item{{ "s" if judgement_count != 1 else "" }}</li>
+        <li><strong>{{ judgement_count|count_label("human_judgement_item") }}</strong></li>
       </ul>
     {% endif %}
   </div>
 
   <div class="answer-actions">
-    <button type="button" id="copy-answer">Copy final answer</button>
-    <a href="/runs/{{ record.id }}/export" download>Export Markdown</a>
+    <button type="button" id="copy-answer" data-copied-label="{{ 'copied_label'|t }}">{{ "copy_final_answer"|t }}</button>
+    <a href="/runs/{{ record.id }}/export" download>{{ "export_markdown"|t }}</a>
   </div>
 
   {% set rendered_answer = result.synthesis.text|render_markdown %}
@@ -60,22 +55,22 @@
        Markdown text, not the rendered HTML. -->
   <pre id="final-answer-text" hidden>{{ result.synthesis.text }}</pre>
   <div class="summary-stats">
-    <span>Total cost: {{ cost }}</span>
-    <span>Duration: {{ elapsed }}</span>
-    <span>Profile: {{ record.profile }}</span>
-    <span>Red-team: {{ "on" if record.red_team_enabled else "off" }}</span>
+    <span>{{ "total_cost_label"|t }}: {{ cost }}</span>
+    <span>{{ "duration_label"|t }}: {{ elapsed }}</span>
+    <span>{{ "profile_meta_label"|t }}: {{ record.profile }}</span>
+    <span>{{ "red_team_meta_label"|t }}: {{ "red_team_on"|t if record.red_team_enabled else "red_team_off"|t }}</span>
   </div>
 </section>
 
 {% include "partials/convergence_summary.html" %}
 
 <section class="artifacts">
-  <h2>Full deliberation trace</h2>
-  {% for name, title in artifact_sections %}
+  <h2>{{ "full_trace_heading"|t }}</h2>
+  {% for name, title_key in artifact_sections %}
     {% set artifact = artifacts.get(name) %}
     {% if artifact %}
     <details>
-      <summary>{{ title }}</summary>
+      <summary>{{ title_key|t }}</summary>
       {% if name == "convergence_analysis" %}
         <pre class="raw-json">{{ artifact.text }}</pre>
       {% else %}

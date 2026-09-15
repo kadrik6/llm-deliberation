@@ -92,7 +92,11 @@ SQLite (`data/deliberation.db`, stdlib `sqlite3`, no ORM) has three
 tables:
 
 - **`runs`** -- one row per deliberation: question, optional context,
-  profile, red-team flag, status, timestamps, aggregated estimated cost.
+  profile, red-team flag, status, timestamps, aggregated estimated cost,
+  and `language` (`en` | `et` -- the run's output language; see
+  [ADR 007](decisions/007-bilingual-support.md)). Migrated onto existing
+  databases the same way the `stages` columns below are, defaulting every
+  pre-existing run to `"en"`.
 - **`stages`** -- one row per stage per run: name, provider, model,
   status (`pending` / `running` / `succeeded` / `failed` / `skipped`),
   attempt count, token counts, estimated cost, error text, timestamps,
@@ -195,6 +199,16 @@ launch the same run twice. `web/presenter.py` only reshapes already-loaded
 orchestration logic. Live pipeline updates use Server-Sent Events, with a
 plain HTML fragment endpoint (`/runs/{id}/status`) as the same data source
 for a no-JS fallback.
+
+`web/i18n.py` holds the UI-chrome translation dictionary (English +
+Estonian interface labels only -- never model output, never persisted
+data) and the `{{ "key"|t }}` / `{{ count|count_label("key") }}` Jinja
+filters that read it. The viewer's UI language is a plain `ui_lang`
+cookie (`web/app.py`'s `_ui_lang`, set via `GET /ui-language/{lang}`),
+resolved fresh on every request and passed into each template's own
+render context -- it is never the same variable as a run's own
+`language` field, and nothing here can write to a run's stored data.
+See [ADR 007](decisions/007-bilingual-support.md).
 
 ## Known scope limits
 

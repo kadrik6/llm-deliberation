@@ -390,3 +390,88 @@ def test_synthesis_receives_validated_canonical_text_not_raw_model_output():
     prompt = _build_prompt("synthesis", "Q?", _texts(convergence_analysis=finalized.text))
     assert "```" not in prompt  # the fence never survived into the prompt
     assert "converged" in prompt
+
+
+# -- bilingual support: prompt/schema-level behavior -----------------------
+
+
+def test_convergence_schema_validates_with_estonian_string_content():
+    payload = _with(
+        convergence="partial",
+        material_changes=[
+            {
+                "candidate": "A",
+                "before": "Eelistas müüjapoolset majutust kiiruse tõttu.",
+                "after": "Eelistab nüüd kliendipoolset juhtimist andmete turvalisuse tõttu.",
+                "material": True,
+                "triggers": [
+                    {
+                        "source": "peer_critique",
+                        "stage": "critique_b_of_a",
+                        "summary": "B tõi välja andmete asukoha riski.",
+                    }
+                ],
+            }
+        ],
+        unresolved_disagreements=[
+            {
+                "topic": "Andmete asukoht",
+                "candidate_a_position": "Eelistab kliendipoolset juhtimist.",
+                "candidate_b_position": "Müüjapoolne töötlus on lubatud, kui on kaitsemeetmed.",
+                "why_unresolved": "Sõltub regulatiivsest kontekstist, mida küsimuses ei antud.",
+                "decision_impact": "Mõjutab lepingu struktuuri ja maksumust.",
+            }
+        ],
+    )
+    analysis = parse_convergence_analysis(json.dumps(payload))
+    assert analysis.convergence == "partial"  # enum stays English/untranslated
+    assert "kliendipoolset" in analysis.material_changes[0].after
+    assert "Andmete asukoht" in analysis.unresolved_disagreements[0].topic
+    # Round-trips through canonicalization without corrupting the Estonian text.
+    round_tripped = parse_convergence_analysis(canonical_json(analysis))
+    assert round_tripped == analysis
+
+
+def test_convergence_enum_values_remain_untranslated_regardless_of_content_language():
+    for level in ("converged", "partial", "diverged", "insufficient_information"):
+        payload = _with(convergence=level)
+        analysis = parse_convergence_analysis(json.dumps(payload))
+        # The stored/schema value is always the stable English enum string,
+        # never a translated label -- translation only ever happens at
+        # display time (web/i18n.py, report.py), never in the artifact.
+        assert analysis.convergence == level
+        assert analysis.convergence in (
+            "converged", "partial", "diverged", "insufficient_information",
+        )
+
+
+@pytest.mark.parametrize("language", ["en", "et"])
+def test_base_system_includes_the_matching_output_language_instruction(language):
+    from llm_deliberation.prompts import base_system
+
+    system_prompt = base_system(language)
+    if language == "et":
+        assert "Estonian" in system_prompt
+        assert "English" not in system_prompt
+    else:
+        assert "English" in system_prompt
+        assert "Estonian" not in system_prompt
+    # Every language variant still tells the model to keep schema/enum
+    # values untranslated.
+    assert "JSON keys" in system_prompt
+    assert "enum values" in system_prompt
+
+
+def test_output_language_instruction_never_asks_to_translate_the_question():
+    from llm_deliberation.prompts import output_language_instruction
+
+    for language in ("en", "et"):
+        instruction = output_language_instruction(language)
+        assert "translate" not in instruction.lower() or "never translate" in instruction.lower()
+        assert "question" not in instruction.lower()
+
+
+def test_unknown_language_falls_back_to_english_instruction():
+    from llm_deliberation.prompts import output_language_instruction
+
+    assert output_language_instruction("fr") == output_language_instruction("en")

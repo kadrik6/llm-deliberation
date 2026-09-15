@@ -13,50 +13,61 @@ STATUS_SYMBOLS: dict[str, str] = {
     "skipped": "⏭",  # ⏭ -- deliberately skipped by the user, not a failure
 }
 
-# (stage_name, display_label) grouped for the pipeline view.
+# (stage_name, display_label) grouped for the pipeline view. Group titles
+# are i18n keys (see web/i18n.py), translated in the template via |t.
+# Individual row labels are left untranslated: several of them are literal
+# provider names (OpenAI/Anthropic/Gemini), which are never translated, and
+# splitting a provider name from a generic label ("Candidate A") within the
+# same row would be inconsistent -- this is a deliberate, disclosed scope
+# boundary for this iteration, not an oversight.
 STAGE_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
-    ("Independent analysis", (("analysis_a", "OpenAI"), ("analysis_b", "Anthropic"))),
+    ("stage_group_analysis", (("analysis_a", "OpenAI"), ("analysis_b", "Anthropic"))),
     (
-        "Cross-critique",
+        "stage_group_critique",
         (
             ("critique_a_of_b", "OpenAI → Anthropic"),
             ("critique_b_of_a", "Anthropic → OpenAI"),
         ),
     ),
-    ("Red-team", (("red_team", "Gemini"),)),
-    ("Revision", (("revision_a", "Candidate A"), ("revision_b", "Candidate B"))),
-    ("Convergence analysis", (("convergence_analysis", "Meta-analysis"),)),
-    ("Final synthesis", (("synthesis", "Synthesis"),)),
+    ("stage_group_red_team", (("red_team", "Gemini"),)),
+    ("stage_group_revision", (("revision_a", "Candidate A"), ("revision_b", "Candidate B"))),
+    ("stage_group_convergence", (("convergence_analysis", "Meta-analysis"),)),
+    ("stage_group_synthesis", (("synthesis", "Synthesis"),)),
 )
 
-# (stage_name, section_title) for the expandable artifact sections shown once
-# a run has succeeded. Synthesis is shown separately as the dominant "final
-# answer", so it is intentionally excluded here. convergence_analysis's raw
-# artifact is structured JSON, not prose -- see result.html, which renders
-# it in a <pre> rather than through the Markdown pipeline.
+# (stage_name, section_title_key) for the expandable artifact sections shown
+# once a run has succeeded. section_title_key is an i18n key (web/i18n.py),
+# translated in the template via |t. Synthesis is shown separately as the
+# dominant "final answer", so it is intentionally excluded here.
+# convergence_analysis's raw artifact is structured JSON, not prose -- see
+# result.html, which renders it in a <pre> rather than through the Markdown
+# pipeline.
 ARTIFACT_SECTIONS: tuple[tuple[str, str], ...] = (
-    ("analysis_a", "Independent analysis A"),
-    ("analysis_b", "Independent analysis B"),
-    ("critique_a_of_b", "Cross-critique A → B"),
-    ("critique_b_of_a", "Cross-critique B → A"),
-    ("red_team", "Independent red-team"),
-    ("revision_a", "Revised candidate A"),
-    ("revision_b", "Revised candidate B"),
-    ("convergence_analysis", "Convergence analysis (raw)"),
+    ("analysis_a", "artifact_analysis_a"),
+    ("analysis_b", "artifact_analysis_b"),
+    ("critique_a_of_b", "artifact_critique_a_of_b"),
+    ("critique_b_of_a", "artifact_critique_b_of_a"),
+    ("red_team", "artifact_red_team"),
+    ("revision_a", "artifact_revision_a"),
+    ("revision_b", "artifact_revision_b"),
+    ("convergence_analysis", "artifact_convergence_analysis"),
 )
 
-# Skip-button label per skippable stage (see SKIPPABLE_STAGE_NAMES). Stages
-# not listed here never show a skip button at all.
-_SKIP_LABELS: dict[str, str] = {
-    "red_team": "Skip red-team and continue",
-    "convergence_analysis": "Skip convergence analysis and continue",
+# Skip-button i18n key per skippable stage (see SKIPPABLE_STAGE_NAMES),
+# translated in the template via |t. Stages not listed here never show a
+# skip button at all.
+_SKIP_LABEL_KEYS: dict[str, str] = {
+    "red_team": "skip_red_team_and_continue",
+    "convergence_analysis": "skip_convergence_and_continue",
 }
 
 PROFILE_ORDER: tuple[str, ...] = ("economy", "balanced", "max")
-PROFILE_BLURBS: dict[str, str] = {
-    "economy": "Fastest/cheapest. Good for routine deliberation.",
-    "balanced": "Stronger models for important questions.",
-    "max": "Highest-quality configuration for difficult decisions.",
+# i18n keys (web/i18n.py) for each profile's blurb, translated in the
+# template via |t.
+PROFILE_BLURB_KEYS: dict[str, str] = {
+    "economy": "profile_economy_blurb",
+    "balanced": "profile_balanced_blurb",
+    "max": "profile_max_blurb",
 }
 
 
@@ -143,7 +154,7 @@ def build_pipeline(record: RunRecord) -> list[dict]:
                     # fallback_chain_retry below.
                     "skippable": name in SKIPPABLE_STAGE_NAMES and stage.status == "failed",
                     "fallback_chain_retry": name == "red_team",
-                    "skip_label": _SKIP_LABELS.get(name, "Skip and continue"),
+                    "skip_label_key": _SKIP_LABEL_KEYS.get(name, "skip_and_continue"),
                 }
             )
         groups.append({"title": title, "rows": rows})

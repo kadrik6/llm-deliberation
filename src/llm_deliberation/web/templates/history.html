@@ -1,16 +1,17 @@
 {% extends "base.html" %}
-{% block title %}History{% endblock %}
+{% block title %}{{ "history_heading"|t }}{% endblock %}
 {% block content %}
-<h1>History</h1>
+<h1>{{ "history_heading"|t }}</h1>
 <table class="history-table">
   <thead>
     <tr>
-      <th>Created</th>
-      <th>Question</th>
-      <th>Profile</th>
-      <th>Red-team</th>
-      <th>Status</th>
-      <th>Cost</th>
+      <th>{{ "history_created"|t }}</th>
+      <th>{{ "history_question"|t }}</th>
+      <th>{{ "history_profile"|t }}</th>
+      <th>{{ "history_language"|t }}</th>
+      <th>{{ "history_red_team"|t }}</th>
+      <th>{{ "history_status"|t }}</th>
+      <th>{{ "history_cost"|t }}</th>
     </tr>
   </thead>
   <tbody>
@@ -19,12 +20,13 @@
       <td><a class="row-link" href="/runs/{{ run.id }}">{{ run.created_at|fmt_datetime }}</a></td>
       <td><a class="row-link" href="/runs/{{ run.id }}">{{ run.question[:80] }}{% if run.question|length > 80 %}&hellip;{% endif %}</a></td>
       <td><a class="row-link" href="/runs/{{ run.id }}">{{ run.profile }}</a></td>
-      <td><a class="row-link" href="/runs/{{ run.id }}">{{ "on" if run.red_team_enabled else "off" }}</a></td>
-      <td><a class="row-link" href="/runs/{{ run.id }}"><span class="badge status-{{ run.status }}">{{ run.status }}</span></a></td>
+      <td><a class="row-link" href="/runs/{{ run.id }}">{{ run.language|upper }}</a></td>
+      <td><a class="row-link" href="/runs/{{ run.id }}">{{ "red_team_on"|t if run.red_team_enabled else "red_team_off"|t }}</a></td>
+      <td><a class="row-link" href="/runs/{{ run.id }}"><span class="badge status-{{ run.status }}">{{ ("status_" ~ run.status)|t }}</span></a></td>
       <td><a class="row-link" href="/runs/{{ run.id }}">${{ "%.4f"|format(run.estimated_total_cost_usd) }}</a></td>
     </tr>
   {% else %}
-    <tr><td colspan="6">No runs yet.</td></tr>
+    <tr><td colspan="7">{{ "history_empty"|t }}</td></tr>
   {% endfor %}
   </tbody>
 </table>

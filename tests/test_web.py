@@ -4,8 +4,11 @@ import json
 import re
 
 
-def _submit(client, *, question="What should we do?", profile="economy", red_team=False, context=""):
-    data = {"question": question, "profile": profile, "context": context}
+def _submit(
+    client, *, question="What should we do?", profile="economy", red_team=False,
+    context="", language="en",
+):
+    data = {"question": question, "profile": profile, "context": context, "language": language}
     if red_team:
         data["red_team"] = "1"
     return client.post("/runs", data=data)
@@ -15,7 +18,7 @@ def test_home_page_renders(client):
     response = client.get("/")
     assert response.status_code == 200
     body = response.text
-    assert "Deliberate" in body
+    assert "Start deliberation" in body
     assert "Economy" in body and "Balanced" in body and "Max" in body
     assert "Independent red-team" in body
 
@@ -781,10 +784,10 @@ def test_decision_snapshot_shows_correct_counts_for_partial_convergence(
     assert "Partial convergence" in body
     # Only the ONE material:true change counts as a material change, not
     # both list entries.
-    assert "<strong>1</strong> material change" in body
-    assert "<strong>3</strong> unresolved disagreement" in body
-    assert "<strong>5</strong> missing fact" in body
-    assert "<strong>3</strong> human judgement item" in body
+    assert "<strong>1 material change</strong>" in body
+    assert "<strong>3 unresolved disagreements</strong>" in body
+    assert "<strong>5 missing facts</strong>" in body
+    assert "<strong>3 human judgement items</strong>" in body
 
 
 def test_decision_snapshot_full_convergence_shows_no_disagreement_warning(
@@ -799,7 +802,7 @@ def test_decision_snapshot_full_convergence_shows_no_disagreement_warning(
     detail = client.get(f"/runs/{run_id}")
     body = detail.text
     assert "Full convergence" in body
-    assert "<strong>0</strong> unresolved disagreement" in body
+    assert "<strong>0 unresolved disagreements</strong>" in body
     assert "No material disagreements remain." in body
 
 
@@ -993,3 +996,133 @@ def test_historical_run_missing_convergence_analysis_shows_disabled_row_when_not
     detail = client.get(f"/runs/{run_id}")
     assert detail.status_code == 200
     assert "Retry failed stage" in detail.text  # revision_a's own failure UI
+
+
+# -- bilingual support: UI language vs run/output language -----------------
+
+
+def test_ui_language_switch_sets_cookie_and_redirects(client):
+    response = client.get("/ui-language/et?next=/history", follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/history"
+    assert response.cookies.get("ui_lang") == "et"
+
+
+def test_ui_language_switch_rejects_unsupported_language(client):
+    response = client.get("/ui-language/fr")
+    assert response.status_code == 404
+
+
+def test_estonian_ui_renders_translated_primary_labels(client):
+    client.cookies.set("ui_lang", "et")
+    body = client.get("/").text
+    assert "Uus arutelu" in body
+    assert "Alusta arutelu" in body
+    assert "Profiil" in body
+    assert "Keel" in body
+
+
+def test_english_ui_renders_english_labels_by_default(client):
+    body = client.get("/").text
+    assert "New deliberation" in body
+    assert "Start deliberation" in body
+    assert "Profile" in body
+
+
+def test_ui_language_is_independent_of_run_output_language(
+    client, service, fake_orchestrator_state
+):
+    """UI: Estonian, Question: English, Output language: English -- one of
+    the four combinations that must be valid (see the brief's examples)."""
+    client.cookies.set("ui_lang", "et")
+    response = _submit(client, question="Should we build or buy?", language="en")
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    assert service.get_run(run_id).language == "en"
+    detail = client.get(f"/runs/{run_id}")
+    body = detail.text
+    # UI chrome is Estonian...
+    assert "Lõppvastus" in body
+    # ...independent of the run's own (English) output language.
+    languages_used = dict(fake_orchestrator_state["languages"])
+    assert languages_used["synthesis"] == "en"
+
+
+def test_opening_english_run_under_estonian_ui_does_not_modify_artifact_content(
+    client, service, fake_orchestrator_state
+):
+    fake_orchestrator_state["responses"] = {"synthesis": {"model": "fake-model", "text": "The English answer."}}
+    response = _submit(client, question="Q?", language="en")
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+    before = service.get_run(run_id)
+    before_synthesis_text = next(s.text for s in before.stages if s.name == "synthesis")
+
+    client.cookies.set("ui_lang", "et")
+    detail = client.get(f"/runs/{run_id}")
+    assert detail.status_code == 200
+    assert "The English answer." in detail.text
+    assert "Lõppvastus" in detail.text  # chrome translated
+
+    after = service.get_run(run_id)
+    after_synthesis_text = next(s.text for s in after.stages if s.name == "synthesis")
+    assert after_synthesis_text == before_synthesis_text == "The English answer."
+
+
+def test_opening_estonian_run_under_english_ui_does_not_modify_artifact_content(
+    client, service, fake_orchestrator_state
+):
+    estonian_text = "See on eestikeelne vastus."
+    fake_orchestrator_state["responses"] = {"synthesis": {"model": "fake-model", "text": estonian_text}}
+    response = _submit(client, question="Q?", language="et")
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+    before = service.get_run(run_id)
+    before_synthesis_text = next(s.text for s in before.stages if s.name == "synthesis")
+
+    # UI stays English (default, no cookie set).
+    detail = client.get(f"/runs/{run_id}")
+    assert detail.status_code == 200
+    assert estonian_text in detail.text
+    assert "Final answer" in detail.text  # chrome stays English
+
+    after = service.get_run(run_id)
+    after_synthesis_text = next(s.text for s in after.stages if s.name == "synthesis")
+    assert after_synthesis_text == before_synthesis_text == estonian_text
+
+
+def test_history_shows_run_language(client, service):
+    _submit(client, question="English question", language="en")
+    _submit(client, question="Eestikeelne küsimus", language="et")
+
+    body = client.get("/history").text
+    assert "EN" in body
+    assert "ET" in body
+
+
+def test_export_preserves_estonian_content_with_english_report_default(
+    client, service, fake_orchestrator_state
+):
+    """Export headings follow the run's own language (point 8) -- for an
+    Estonian run, the report.py structural headings switch to Estonian too,
+    while the model-generated content is exactly what was persisted."""
+    estonian_text = "Sisuline järeldus eesti keeles."
+    fake_orchestrator_state["responses"] = {"synthesis": {"model": "fake-model", "text": estonian_text}}
+    response = _submit(client, question="Küsimus?", language="et")
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    export = client.get(f"/runs/{run_id}/export")
+    assert export.status_code == 200
+    assert estonian_text in export.text  # model content unchanged
+    assert "# LLM arutelu raport" in export.text  # report's own heading, Estonian
+    assert "## Lõppsüntees" in export.text
+
+
+def test_export_of_english_run_keeps_english_report_headings(
+    client, service, fake_orchestrator_state
+):
+    response = _submit(client, question="Q?", language="en")
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    export = client.get(f"/runs/{run_id}/export")
+    assert export.status_code == 200
+    assert "# LLM Deliberation Report" in export.text
+    assert "## Final synthesis" in export.text

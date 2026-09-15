@@ -1,13 +1,12 @@
 {% extends "base.html" %}
-{% block title %}New deliberation{% endblock %}
+{% block title %}{{ "new_deliberation_title"|t }}{% endblock %}
 {% block content %}
-<h1>New deliberation</h1>
+<h1>{{ "new_deliberation_title"|t }}</h1>
 
 {% if missing_keys %}
 <div class="notice">
-  <p>Missing configuration: {{ missing_keys|join(", ") }}.</p>
-  <p class="hint">Add them to <code>.env</code> before starting a run. Red-team requires
-  <code>GEMINI_API_KEY</code> only when enabled.</p>
+  <p>{{ "missing_config_notice"|t }}: {{ missing_keys|join(", ") }}.</p>
+  <p class="hint">{{ "missing_config_hint"|t }}</p>
 </div>
 {% endif %}
 
@@ -18,41 +17,50 @@
 {% endif %}
 
 <form method="post" action="/runs" id="new-run-form">
-  <label for="question">What do you want the models to think through?</label>
+  <label for="question">{{ "question_label"|t }}</label>
   <textarea id="question" name="question" rows="8" required
-    placeholder="Describe the question or decision...">{{ question_value or "" }}</textarea>
+    placeholder="{{ 'question_placeholder'|t }}">{{ question_value or "" }}</textarea>
 
   <details {% if context_value %}open{% endif %}>
-    <summary>Add context (optional)</summary>
-    <label for="context" class="sr-only">Optional context</label>
+    <summary>{{ "context_summary"|t }}</summary>
+    <label for="context" class="sr-only">{{ "context_summary"|t }}</label>
     <textarea id="context" name="context" rows="5"
-      placeholder="Extra background, constraints, prior discussion...">{{ context_value or "" }}</textarea>
+      placeholder="{{ 'context_placeholder'|t }}">{{ context_value or "" }}</textarea>
   </details>
 
   <fieldset class="profiles">
-    <legend>Profile</legend>
-    {% for key, blurb in profiles %}
+    <legend>{{ "profile_legend"|t }}</legend>
+    {% for key, blurb_key in profiles %}
     <label class="profile-option">
       <input type="radio" name="profile" value="{{ key }}"
         {% if key == default_profile %}checked{% endif %}>
       <span class="profile-name">{{ key|capitalize }}</span>
-      <span class="profile-blurb">{{ blurb }}</span>
+      <span class="profile-blurb">{{ blurb_key|t }}</span>
     </label>
     {% endfor %}
   </fieldset>
 
-  <fieldset class="red-team">
-    <legend>Independent red-team</legend>
-    <label class="switch">
-      <input type="checkbox" name="red_team" value="1" {% if default_red_team %}checked{% endif %}>
-      <span>On</span>
+  <fieldset class="profiles language">
+    <legend>{{ "language_legend"|t }}</legend>
+    {% for code, native_name in language_options %}
+    <label class="profile-option">
+      <input type="radio" name="language" value="{{ code }}"
+        {% if code == default_language %}checked{% endif %}>
+      <span class="profile-name">{{ native_name }}</span>
     </label>
-    <p class="hint">
-      A third model does not vote on the answer. It looks for assumptions and
-      blind spots shared by both primary models.
-    </p>
+    {% endfor %}
+    <p class="hint">{{ "language_hint"|t }}</p>
   </fieldset>
 
-  <button type="submit" id="submit-btn">Deliberate</button>
+  <fieldset class="red-team">
+    <legend>{{ "red_team_legend"|t }}</legend>
+    <label class="switch">
+      <input type="checkbox" name="red_team" value="1" {% if default_red_team %}checked{% endif %}>
+      <span>{{ "on_label"|t }}</span>
+    </label>
+    <p class="hint">{{ "red_team_hint"|t }}</p>
+  </fieldset>
+
+  <button type="submit" id="submit-btn">{{ "start_deliberation"|t }}</button>
 </form>
 {% endblock %}

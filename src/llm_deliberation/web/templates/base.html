@@ -1,17 +1,23 @@
 <!doctype html>
-<html lang="en">
+<html lang="{{ ui_lang }}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block title %}LLM Deliberation{% endblock %}</title>
+<title>{% block title %}{{ "brand"|t }}{% endblock %}</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 <header class="topbar">
-  <a class="brand" href="/">LLM Deliberation</a>
+  <a class="brand" href="/">{{ "brand"|t }}</a>
   <nav>
-    <a href="/">New</a>
-    <a href="/history">History</a>
+    <a href="/">{{ "nav_new"|t }}</a>
+    <a href="/history">{{ "nav_history"|t }}</a>
+    <span class="lang-switch">
+      <a href="/ui-language/et?next={{ request.url.path }}"
+         class="{{ 'active' if ui_lang == 'et' }}">ET</a>
+      <a href="/ui-language/en?next={{ request.url.path }}"
+         class="{{ 'active' if ui_lang == 'en' }}">EN</a>
+    </span>
   </nav>
 </header>
 <main>

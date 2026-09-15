@@ -37,6 +37,7 @@ class RunResult:
     question: str
     profile: str
     red_team_enabled: bool
+    language: str
     analysis_a: ModelResponse
     analysis_b: ModelResponse
     critique_a_of_b: ModelResponse

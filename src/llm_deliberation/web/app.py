@@ -13,12 +13,20 @@ from fastapi.templating import Jinja2Templates
 
 from llm_deliberation import convergence, report
 from llm_deliberation.config import default_profile, default_red_team_enabled
+from llm_deliberation.prompts import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES
 from llm_deliberation.service import DeliberationService
 from llm_deliberation.store import RunRecord
+from llm_deliberation.web.i18n import (
+    DEFAULT_UI_LANGUAGE,
+    NATIVE_LANGUAGE_NAMES,
+    SUPPORTED_UI_LANGUAGES,
+    count_label,
+    translate,
+)
 from llm_deliberation.web.markdown_render import render_markdown_safe, split_synthesis_sections
 from llm_deliberation.web.presenter import (
     ARTIFACT_SECTIONS,
-    PROFILE_BLURBS,
+    PROFILE_BLURB_KEYS,
     PROFILE_ORDER,
     build_pipeline,
     elapsed_seconds,
@@ -32,6 +40,8 @@ STATIC_DIR = WEB_DIR / "static"
 
 HOST = "127.0.0.1"
 PORT = 8765
+
+UI_LANG_COOKIE = "ui_lang"
 
 
 def _missing_keys() -> list[str]:
@@ -49,11 +59,25 @@ def _sse(event: str, data: str) -> str:
     return f"event: {event}\n{payload}\n\n"
 
 
-def _profile_context(**overrides: object) -> dict:
+def _ui_lang(request: Request) -> str:
+    """The viewer's interface-chrome language, from a plain cookie only --
+    never inferred from a run, never persisted server-side. See web/i18n.py.
+    """
+    lang = request.cookies.get(UI_LANG_COOKIE)
+    return lang if lang in SUPPORTED_UI_LANGUAGES else DEFAULT_UI_LANGUAGE
+
+
+def _profile_context(*, ui_lang: str, **overrides: object) -> dict:
     base = {
-        "profiles": [(key, PROFILE_BLURBS[key]) for key in PROFILE_ORDER],
+        "ui_lang": ui_lang,
+        "profiles": [(key, PROFILE_BLURB_KEYS[key]) for key in PROFILE_ORDER],
         "default_profile": default_profile(),
         "default_red_team": default_red_team_enabled(),
+        # New-run output language defaults to the viewer's UI language, but
+        # remains a fully independent, overridable form field (see
+        # index.html) -- never forced, never inferred from the question.
+        "default_language": ui_lang if ui_lang in SUPPORTED_LANGUAGES else DEFAULT_LANGUAGE,
+        "language_options": [(code, NATIVE_LANGUAGE_NAMES[code]) for code in SUPPORTED_LANGUAGES],
         "missing_keys": _missing_keys(),
         "error": None,
         "question_value": None,
@@ -85,16 +109,30 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
     # split_synthesis_sections' docstring. Presentation reorganization only:
     # it never infers meaning, just groups by existing heading boundaries.
     templates.env.filters["split_sections"] = split_synthesis_sections
+
+    @jinja2.pass_context
+    def _translate_filter(context: jinja2.runtime.Context, key: str) -> str:
+        return translate(key, context.get("ui_lang", DEFAULT_UI_LANGUAGE))
+
+    @jinja2.pass_context
+    def _count_label_filter(context: jinja2.runtime.Context, count: int, key: str) -> str:
+        return count_label(key, count, context.get("ui_lang", DEFAULT_UI_LANGUAGE))
+
+    # UI-chrome translation only (see web/i18n.py) -- {{ "key"|t }} reads
+    # whatever "ui_lang" is in that template's own render context, never a
+    # run's own output language.
+    templates.env.filters["t"] = _translate_filter
+    templates.env.filters["count_label"] = _count_label_filter
     # Fail loudly on a missing template variable instead of silently
     # rendering blank -- caught a real bug (missing run_id/status in the
     # run_detail context) during development.
     templates.env.undefined = jinja2.StrictUndefined
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-    def render_pipeline_fragment(record: RunRecord) -> str:
+    def render_pipeline_fragment(record: RunRecord, ui_lang: str) -> str:
         groups = build_pipeline(record)
         return templates.get_template("partials/pipeline.html").render(
-            groups=groups, run_id=record.id, status=record.status
+            groups=groups, run_id=record.id, status=record.status, ui_lang=ui_lang
         )
 
     def reserve(run_id: str) -> bool:
@@ -132,7 +170,20 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
-        return templates.TemplateResponse(request, "index.html", _profile_context())
+        return templates.TemplateResponse(
+            request, "index.html", _profile_context(ui_lang=_ui_lang(request))
+        )
+
+    @app.get("/ui-language/{lang}")
+    async def set_ui_language(lang: str, next: str = "/"):
+        """Switch the viewer's interface-chrome language. A plain cookie,
+        set via a GET link (no JS required) -- this never touches any run's
+        stored data or output language; see web/i18n.py."""
+        if lang not in SUPPORTED_UI_LANGUAGES:
+            raise HTTPException(status_code=404, detail="Unsupported UI language")
+        response = RedirectResponse(url=next or "/", status_code=303)
+        response.set_cookie(UI_LANG_COOKIE, lang, max_age=60 * 60 * 24 * 365, samesite="lax")
+        return response
 
     @app.post("/runs")
     async def submit_run(
@@ -142,8 +193,10 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
         context: str = Form(""),
         profile: str = Form(...),
         red_team: str | None = Form(None),
+        language: str = Form(DEFAULT_LANGUAGE),
     ):
         svc: DeliberationService = request.app.state.service
+        ui_lang = _ui_lang(request)
         question = question.strip()
         context_value = context.strip() or None
 
@@ -152,8 +205,10 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
                 request,
                 "index.html",
                 _profile_context(
+                    ui_lang=ui_lang,
                     default_profile=profile,
                     default_red_team=bool(red_team),
+                    default_language=language,
                     error="Question cannot be empty.",
                     question_value=question,
                     context_value=context_value,
@@ -167,14 +222,17 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
                 profile=profile,
                 red_team_enabled=bool(red_team),
                 context=context_value,
+                language=language,
             )
         except ValueError as exc:
             return templates.TemplateResponse(
                 request,
                 "index.html",
                 _profile_context(
+                    ui_lang=ui_lang,
                     default_profile=profile,
                     default_red_team=bool(red_team),
+                    default_language=language,
                     error=str(exc),
                     question_value=question,
                     context_value=context_value,
@@ -196,11 +254,13 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Run not found")
 
         context: dict = {
+            "ui_lang": _ui_lang(request),
             "record": record,
             "run_id": run_id,
             "status": record.status,
             "cost": f"${record.estimated_total_cost_usd:.4f}",
             "elapsed": format_duration(elapsed_seconds(record)),
+            "language_native_name": NATIVE_LANGUAGE_NAMES.get(record.language, record.language),
         }
 
         if record.status == "succeeded":
@@ -239,7 +299,7 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
             record = svc.get_run(run_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="Run not found")
-        return HTMLResponse(render_pipeline_fragment(record))
+        return HTMLResponse(render_pipeline_fragment(record, _ui_lang(request)))
 
     @app.get("/runs/{run_id}/events")
     async def run_events(request: Request, run_id: str):
@@ -248,6 +308,7 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
             svc.get_run(run_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="Run not found")
+        ui_lang = _ui_lang(request)
 
         async def event_stream():
             while True:
@@ -255,7 +316,7 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
                     record = svc.get_run(run_id)
                 except KeyError:
                     return
-                yield _sse("pipeline", render_pipeline_fragment(record))
+                yield _sse("pipeline", render_pipeline_fragment(record, ui_lang))
                 still_running = run_id in request.app.state.running
                 if record.status in ("succeeded", "failed") and not still_running:
                     yield _sse("done", run_id)
@@ -335,7 +396,9 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
     async def history(request: Request):
         svc: DeliberationService = request.app.state.service
         runs = svc.list_runs(limit=100)
-        return templates.TemplateResponse(request, "history.html", {"runs": runs})
+        return templates.TemplateResponse(
+            request, "history.html", {"runs": runs, "ui_lang": _ui_lang(request)}
+        )
 
     return app
 

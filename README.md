@@ -255,6 +255,49 @@ Each profile maps to specific OpenAI/Anthropic/Gemini model IDs in
 `src/llm_deliberation/config.py`, all overridable via `.env`
 (`OPENAI_MODEL`, `ANTHROPIC_MODEL`, `GEMINI_MODEL`).
 
+## Language support
+
+The web UI supports English and Estonian, and the two are two genuinely
+separate settings:
+
+- **UI language** -- which language interface labels ("New", "History",
+  "Final answer", "What changed?", ...) are shown in. A plain cookie, set
+  from the small `EN | ET` switch in the top bar, affecting only your
+  browser. It is never inferred from a run and never stored with one.
+- **Run/output language** (`en` | `et`) -- the language every model-
+  generated stage of *that run* is written in: both independent analyses,
+  both critiques, the optional red-team report, both revisions, the
+  convergence analysis, and the final synthesis. Chosen per run (defaults
+  to whatever your current UI language is, but is independently
+  overridable on the "New deliberation" form), and **persisted with the
+  run** -- it survives retry, resume, a failed/skipped stage, server
+  restarts, and shows up in history and exports.
+
+A few things are true by design, not by accident:
+
+- **The question you type is never translated or rewritten.** Whatever
+  language you write your question in, the models receive it exactly as
+  entered -- independent of the output language you chose. Asking an
+  English question with Estonian output (or the reverse) is intentionally
+  supported, not an edge case.
+- **There is no automatic language detection.** The output language is
+  always an explicit choice (yours, or the profile-independent default),
+  never guessed from the question's language.
+- **Internal schema/enum values are never translated.** The convergence
+  analysis's structured JSON (`"convergence": "partial"`,
+  `"material": true`, field names, stage identifiers) stays in stable
+  English regardless of the run's output language -- only the
+  human-readable string *values* inside it (a topic, a position, a
+  reason) follow the run's language. See
+  [ADR 007](docs/decisions/007-bilingual-support.md).
+- **Historical runs are never translated retroactively.** A run created
+  before this feature existed is treated as an English-output run (a
+  stated default, not a guess from its content) and its stored text is
+  never touched. Viewing an old run under an Estonian UI shows Estonian
+  chrome around unchanged original content -- the UI language and a run's
+  content are independent by construction, so this falls out for free
+  rather than needing special-case handling.
+
 ## Red-team
 
 An optional third model (`--red-team` / `--no-red-team`, or a switch in

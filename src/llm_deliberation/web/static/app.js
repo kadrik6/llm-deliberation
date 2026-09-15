@@ -31,7 +31,7 @@
       if (!el || !navigator.clipboard) return;
       navigator.clipboard.writeText(el.textContent).then(function () {
         var original = copyBtn.textContent;
-        copyBtn.textContent = "Copied";
+        copyBtn.textContent = copyBtn.dataset.copiedLabel || "Copied";
         setTimeout(function () {
           copyBtn.textContent = original;
         }, 1500);

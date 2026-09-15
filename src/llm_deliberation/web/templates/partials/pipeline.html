@@ -1,17 +1,17 @@
 <div class="pipeline">
 {% for group in groups %}
   <div class="stage-group">
-    <h3>{{ group.title }}</h3>
+    <h3>{{ group.title|t }}</h3>
     {% for row in group.rows %}
       <div class="stage-row status-{{ 'disabled' if row.disabled else row.status }}">
         <span class="stage-symbol">{{ '–' if row.disabled else row.symbol }}</span>
         <span class="stage-label">{{ row.label }}</span>
         {% if row.disabled %}
-          <span class="stage-note">disabled</span>
+          <span class="stage-note">{{ "stage_disabled"|t }}</span>
         {% elif row.status == 'running' %}
           <span class="stage-note">{{ row.running_note }}</span>
         {% elif row.status == 'skipped' %}
-          <span class="stage-note">skipped{{ (" — " + row.fallback_reason) if row.fallback_reason else "" }}</span>
+          <span class="stage-note">{{ "stage_skipped"|t }}{{ (" — " + row.fallback_reason) if row.fallback_reason else "" }}</span>
         {% elif row.status == 'succeeded' and row.fallback_used %}
           <span class="stage-fallback-note">
             Requested: <code>{{ row.requested_model }}</code> · Used: <code>{{ row.model }}</code>
@@ -28,25 +28,25 @@
           {% if row.skippable and row.fallback_chain_retry %}
             <form method="post" action="/runs/{{ run_id }}/stages/{{ row.name }}/retry" class="inline-form">
               <input type="hidden" name="mode" value="preferred_only">
-              <button type="submit">Retry preferred model</button>
+              <button type="submit">{{ "retry_preferred_model"|t }}</button>
             </form>
             <form method="post" action="/runs/{{ run_id }}/stages/{{ row.name }}/retry" class="inline-form">
               <input type="hidden" name="mode" value="chain">
-              <button type="submit">Retry with fallback chain</button>
+              <button type="submit">{{ "retry_with_fallback_chain"|t }}</button>
             </form>
             <form method="post" action="/runs/{{ run_id }}/stages/{{ row.name }}/skip" class="inline-form">
-              <button type="submit">{{ row.skip_label }}</button>
+              <button type="submit">{{ row.skip_label_key|t }}</button>
             </form>
           {% elif row.skippable %}
             <form method="post" action="/runs/{{ run_id }}/stages/{{ row.name }}/retry" class="inline-form">
-              <button type="submit">Retry failed stage</button>
+              <button type="submit">{{ "retry_failed_stage"|t }}</button>
             </form>
             <form method="post" action="/runs/{{ run_id }}/stages/{{ row.name }}/skip" class="inline-form">
-              <button type="submit">{{ row.skip_label }}</button>
+              <button type="submit">{{ row.skip_label_key|t }}</button>
             </form>
           {% else %}
             <form method="post" action="/runs/{{ run_id }}/stages/{{ row.name }}/retry" class="inline-form">
-              <button type="submit">Retry failed stage</button>
+              <button type="submit">{{ "retry_failed_stage"|t }}</button>
             </form>
           {% endif %}
         {% endif %}
@@ -57,10 +57,10 @@
 </div>
 
 <div class="run-status-banner status-{{ status }}">
-  <p>Status: {{ status }}</p>
+  <p>{{ "status_label"|t }}: {{ ("status_" ~ status)|t }}</p>
   {% if status != 'succeeded' %}
     <form method="post" action="/runs/{{ run_id }}/resume" class="inline-form">
-      <button type="submit">Resume run</button>
+      <button type="submit">{{ "resume_run"|t }}</button>
     </form>
   {% endif %}
 </div>

@@ -12,6 +12,7 @@ from llm_deliberation.orchestrator import (
     WAVES,
     DeliberationOrchestrator,
 )
+from llm_deliberation.prompts import SUPPORTED_LANGUAGES
 from llm_deliberation.providers import ProviderGenerationError
 from llm_deliberation.store import DEFAULT_DB_PATH, Repository, RunRecord, utc_now_iso
 from llm_deliberation.types import ModelResponse, RunResult, Usage
@@ -48,12 +49,16 @@ class DeliberationService:
         profile: str,
         red_team_enabled: bool | None = None,
         context: str | None = None,
+        language: str = "en",
     ) -> str:
         if profile not in PROFILES:
             valid = ", ".join(sorted(PROFILES))
             raise ValueError(f"Unknown profile '{profile}'. Choose one of: {valid}")
         if not question or not question.strip():
             raise ValueError("question must not be empty")
+        if language not in SUPPORTED_LANGUAGES:
+            valid = ", ".join(sorted(SUPPORTED_LANGUAGES))
+            raise ValueError(f"Unknown language '{language}'. Choose one of: {valid}")
 
         enabled = default_red_team_enabled() if red_team_enabled is None else red_team_enabled
 
@@ -64,6 +69,7 @@ class DeliberationService:
             context=context,
             profile=profile,
             red_team_enabled=enabled,
+            language=language,
         )
         for name in ALL_STAGE_NAMES:
             if name == "red_team" and not enabled:
@@ -117,6 +123,7 @@ class DeliberationService:
             question=record.question,
             profile=record.profile,
             red_team_enabled=record.red_team_enabled,
+            language=record.language,
             analysis_a=response("analysis_a"),
             analysis_b=response("analysis_b"),
             critique_a_of_b=response("critique_a_of_b"),
@@ -249,7 +256,8 @@ class DeliberationService:
             results = await asyncio.gather(
                 *(
                     orchestrator.run_stage(
-                        name, effective_question, texts, gemini_mode=gemini_mode
+                        name, effective_question, texts,
+                        gemini_mode=gemini_mode, language=run.language,
                     )
                     for name in pending_names
                 ),

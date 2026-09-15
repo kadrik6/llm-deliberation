@@ -1,68 +1,68 @@
 {% if evolution is not none %}
 <section class="what-changed">
-  <h2>What changed?</h2>
+  <h2>{{ "what_changed_heading"|t }}</h2>
   {% if evolution.material_changes %}
     {% for candidate, changes in evolution.material_changes|groupby("candidate") %}
       <div class="candidate-changes">
-        <p class="change-candidate">Candidate {{ candidate }}</p>
+        <p class="change-candidate">{{ "candidate_label"|t }} {{ candidate }}</p>
         {% for change in changes %}
           <div class="change-card {{ 'is-material' if change.material else 'is-not-material' }}">
             <div class="change-positions">
               <div class="change-before">
-                <span class="change-position-label">Before</span>
+                <span class="change-position-label">{{ "before_label"|t }}</span>
                 <p>{{ change.before }}</p>
               </div>
               <div class="change-arrow" aria-hidden="true">&rarr;</div>
               <div class="change-after">
-                <span class="change-position-label">After</span>
+                <span class="change-position-label">{{ "after_label"|t }}</span>
                 <p>{{ change.after }}</p>
               </div>
             </div>
             {% if change.triggers %}
               <p class="change-trigger">
-                <strong>Trigger{{ "s" if change.triggers|length > 1 else "" }}:</strong>
+                <strong>{{ ("triggers_label" if change.triggers|length > 1 else "trigger_label")|t }}:</strong>
                 {%- for t in change.triggers %}
-                  {{ t.summary }}{% if t.source == "uncertain" %} (cause uncertain){% endif %}{% if not loop.last %};{% endif %}
+                  {{ t.summary }}{% if t.source == "uncertain" %} {{ "cause_uncertain"|t }}{% endif %}{% if not loop.last %};{% endif %}
                 {%- endfor %}
               </p>
             {% endif %}
-            <p class="change-material"><strong>Material change:</strong> {{ "Yes" if change.material else "No" }}</p>
+            <p class="change-material"><strong>{{ "material_change_label"|t }}:</strong> {{ "yes_label"|t if change.material else "no_label"|t }}</p>
           </div>
         {% endfor %}
       </div>
     {% endfor %}
   {% else %}
-    <p class="stage-note">No material position changes were identified.</p>
+    <p class="stage-note">{{ "no_material_changes"|t }}</p>
   {% endif %}
 </section>
 
 <section class="disagreement-map">
-  <h2>Where they still disagree</h2>
+  <h2>{{ "disagreement_map_heading"|t }}</h2>
   {% if evolution.unresolved_disagreements %}
     {% for d in evolution.unresolved_disagreements %}
       <div class="disagreement-card">
         <p class="disagreement-topic">{{ d.topic }}</p>
         <div class="disagreement-positions">
           <div class="disagreement-position">
-            <span class="change-position-label">Candidate A</span>
+            <span class="change-position-label">{{ "candidate_label"|t }} A</span>
             <p>{{ d.candidate_a_position }}</p>
           </div>
           <div class="disagreement-position">
-            <span class="change-position-label">Candidate B</span>
+            <span class="change-position-label">{{ "candidate_label"|t }} B</span>
             <p>{{ d.candidate_b_position }}</p>
           </div>
         </div>
-        <p><strong>Why unresolved:</strong> {{ d.why_unresolved }}</p>
-        <p><strong>Decision impact:</strong> {{ d.decision_impact }}</p>
+        <p><strong>{{ "why_unresolved_label"|t }}:</strong> {{ d.why_unresolved }}</p>
+        <p><strong>{{ "decision_impact_label"|t }}:</strong> {{ d.decision_impact }}</p>
       </div>
     {% endfor %}
   {% else %}
-    <p class="stage-note">No material disagreements remain.</p>
+    <p class="stage-note">{{ "no_disagreements"|t }}</p>
   {% endif %}
 </section>
 
 <section class="agreements">
-  <h2>Agreements reached</h2>
+  <h2>{{ "agreements_heading"|t }}</h2>
   {% if evolution.agreements_reached %}
     <ul>
       {% for a in evolution.agreements_reached %}
@@ -70,41 +70,38 @@
       {% endfor %}
     </ul>
   {% else %}
-    <p class="stage-note">No shared agreements were identified.</p>
+    <p class="stage-note">{{ "no_agreements"|t }}</p>
   {% endif %}
 </section>
 
 <section class="remaining-unknowns">
-  <h2>What should you find out next?</h2>
+  <h2>{{ "remaining_unknowns_heading"|t }}</h2>
   {% if evolution.remaining_unknowns %}
     <ul class="checklist">
       {% for u in evolution.remaining_unknowns %}
         <li>
           <p class="checklist-item">{{ u.unknown }}</p>
-          <p class="checklist-detail"><strong>Why it matters:</strong> {{ u.why_it_matters }}</p>
-          <p class="checklist-detail"><strong>Evidence needed:</strong> {{ u.evidence_needed }}</p>
+          <p class="checklist-detail"><strong>{{ "why_it_matters_label"|t }}:</strong> {{ u.why_it_matters }}</p>
+          <p class="checklist-detail"><strong>{{ "evidence_needed_label"|t }}:</strong> {{ u.evidence_needed }}</p>
         </li>
       {% endfor %}
     </ul>
   {% else %}
-    <p class="stage-note">No outstanding unknowns were identified.</p>
+    <p class="stage-note">{{ "no_unknowns"|t }}</p>
   {% endif %}
 </section>
 
 <section class="human-judgement">
-  <h2>You decide</h2>
+  <h2>{{ "human_judgement_heading"|t }}</h2>
   {% if evolution.human_judgement_required %}
-    <p class="section-intro">
-      More analysis cannot resolve these -- they are values, risk-appetite, or
-      stakeholder choices only a person can make.
-    </p>
+    <p class="section-intro">{{ "human_judgement_intro"|t }}</p>
     <ul>
       {% for h in evolution.human_judgement_required %}
         <li><strong>{{ h.issue }}:</strong> {{ h.why_models_cannot_resolve_it }}</li>
       {% endfor %}
     </ul>
   {% else %}
-    <p class="stage-note">No issues were flagged as requiring human judgement.</p>
+    <p class="stage-note">{{ "no_human_judgement"|t }}</p>
   {% endif %}
 </section>
 {% endif %}

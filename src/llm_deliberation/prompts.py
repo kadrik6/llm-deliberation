@@ -2,14 +2,61 @@ from __future__ import annotations
 
 from llm_deliberation import convergence
 
+# Supported run/output languages -- the language every user-facing generated
+# stage in a run is written in. Deliberately separate from, and never
+# conflated with, a web viewer's UI-chrome language preference (see
+# web/i18n.py): this is per-run, persisted, and immutable once a run exists.
+SUPPORTED_LANGUAGES: tuple[str, ...] = ("en", "et")
+DEFAULT_LANGUAGE = "en"
 
-BASE_SYSTEM = """
+_BASE_SYSTEM_TEMPLATE = """
 You are one component in a multi-model deliberation system.
 Optimize for truth, decision quality, and calibrated uncertainty — not agreement.
 Distinguish facts, assumptions, inference, and preference.
 Do not defer to another candidate merely because it sounds confident.
 Be concise enough that later reviewers can inspect every important claim.
+
+{language_instruction}
 """.strip()
+
+# One centralized instruction, reused for every stage's system prompt via
+# base_system() below, rather than duplicating language wording across each
+# of the individual prompt-builder functions in this module. Deliberately
+# does not ask the model to translate the user's question -- callers always
+# pass the question through unchanged (see orchestrator._build_prompt).
+_OUTPUT_LANGUAGE_INSTRUCTIONS: dict[str, str] = {
+    "en": (
+        "OUTPUT LANGUAGE\n"
+        "Write all user-facing analytical content in English. Keep required "
+        "JSON keys, schema field names, enum values, stage identifiers, and "
+        "machine-readable values exactly as specified -- never translate those."
+    ),
+    "et": (
+        "OUTPUT LANGUAGE\n"
+        "Write all user-facing analytical content in natural Estonian. Keep "
+        "required JSON keys, schema field names, enum values, stage "
+        "identifiers, and machine-readable values exactly as specified -- "
+        "never translate those."
+    ),
+}
+
+
+def output_language_instruction(language: str) -> str:
+    """The shared output-language directive for the given run language.
+
+    Falls back to English wording for an unrecognized value rather than
+    raising -- callers (service.py, create_run) are responsible for
+    rejecting an unsupported language before a run is ever created; this
+    function stays a pure, defensive lookup.
+    """
+    return _OUTPUT_LANGUAGE_INSTRUCTIONS.get(language, _OUTPUT_LANGUAGE_INSTRUCTIONS[DEFAULT_LANGUAGE])
+
+
+def base_system(language: str = DEFAULT_LANGUAGE) -> str:
+    """The shared system prompt for every stage, with the output-language
+    instruction injected once here -- the only place any stage prompt
+    mentions language at all."""
+    return _BASE_SYSTEM_TEMPLATE.format(language_instruction=output_language_instruction(language))
 
 
 def independent_analysis(question: str) -> str:

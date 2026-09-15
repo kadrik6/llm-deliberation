@@ -191,6 +191,7 @@ class DeliberationOrchestrator:
         texts: dict[str, str],
         *,
         gemini_mode: str = "chain",
+        language: str = "en",
     ) -> ModelResponse:
         provider = getattr(self, STAGE_PROVIDER[stage])
         prompt = _build_prompt(stage, question, texts)
@@ -198,7 +199,12 @@ class DeliberationOrchestrator:
         # the red_team stage's "Retry preferred model" vs "Retry with
         # fallback chain" UI actions); every other provider ignores it.
         kwargs = {"mode": gemini_mode} if stage == "red_team" else {}
-        response = await _call(provider, system=prompts.BASE_SYSTEM, prompt=prompt, **kwargs)
+        # language only affects the shared system prompt (see
+        # prompts.base_system) -- the user's original question is always
+        # passed through unchanged, never translated (see _build_prompt).
+        response = await _call(
+            provider, system=prompts.base_system(language), prompt=prompt, **kwargs
+        )
         if stage == "convergence_analysis":
             response = _finalize_convergence_response(response)
         return response

@@ -41,6 +41,8 @@ class FakeOrchestrator:
         name.
     state["gemini_modes"]: list[(stage, gemini_mode)] observed, so tests can
         assert which retry mode the service actually requested.
+    state["languages"]: list[(stage, language)] observed, so tests can
+        assert which run language the service actually requested.
     """
 
     def __init__(self, settings, *, state: dict):
@@ -54,9 +56,11 @@ class FakeOrchestrator:
         texts: dict[str, str],
         *,
         gemini_mode: str = "chain",
+        language: str = "en",
     ) -> ModelResponse:
         self._state["log"].append(stage)
         self._state.setdefault("gemini_modes", []).append((stage, gemini_mode))
+        self._state.setdefault("languages", []).append((stage, language))
 
         fail_with = self._state.get("fail_with", {})
         if stage in fail_with:
