@@ -14,7 +14,13 @@ from fastapi.templating import Jinja2Templates
 from llm_deliberation import convergence, report
 from llm_deliberation.config import default_profile, default_red_team_enabled
 from llm_deliberation.prompts import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES
-from llm_deliberation.service import DeliberationService
+from llm_deliberation.service import (
+    MAX_QUESTION_LENGTH,
+    QUESTION_LENGTH_WARNING_THRESHOLD,
+    RECOMMENDED_QUESTION_LENGTH,
+    DeliberationService,
+    QuestionTooLongError,
+)
 from llm_deliberation.store import RunRecord
 from llm_deliberation.web.i18n import (
     DEFAULT_UI_LANGUAGE,
@@ -85,6 +91,12 @@ def _profile_context(*, ui_lang: str, **overrides: object) -> dict:
         "error": None,
         "question_value": None,
         "context_value": None,
+        # UX-only length guidance for the Question field (see service.py,
+        # the single authoritative source of these numbers) -- never
+        # enforced by the browser alone, see submit_run's server-side check.
+        "question_max_length": MAX_QUESTION_LENGTH,
+        "question_recommended_length": RECOMMENDED_QUESTION_LENGTH,
+        "question_warn_threshold": QUESTION_LENGTH_WARNING_THRESHOLD,
     }
     base.update(overrides)
     return base
@@ -238,6 +250,24 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
                 context=context_value,
                 language=language,
             )
+        except QuestionTooLongError:
+            # A UX safeguard (see service.MAX_QUESTION_LENGTH), never a
+            # provider/model call -- create_run raises before any stage
+            # row or run row is inserted, so no run exists at this point.
+            return templates.TemplateResponse(
+                request,
+                "index.html",
+                _profile_context(
+                    ui_lang=ui_lang,
+                    default_profile=profile,
+                    default_red_team=bool(red_team),
+                    default_language=language,
+                    error=translate("question_too_long_error", ui_lang),
+                    question_value=question,
+                    context_value=context_value,
+                ),
+                status_code=400,
+            )
         except ValueError as exc:
             return templates.TemplateResponse(
                 request,
@@ -274,7 +304,6 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
             "status": record.status,
             "cost": f"${record.estimated_total_cost_usd:.4f}",
             "elapsed": format_duration(elapsed_seconds(record)),
-            "language_native_name": NATIVE_LANGUAGE_NAMES.get(record.language, record.language),
             # A terminal run (succeeded/failed) is rendered once and never
             # opens a live connection -- retryability (a failed run can
             # still be retried/resumed/skipped) is not "currently running".

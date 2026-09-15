@@ -6,13 +6,13 @@
     {% for row in group.rows %}
       <div class="stage-row status-{{ 'disabled' if row.disabled else row.status }}">
         <span class="stage-symbol">{{ '–' if row.disabled else row.symbol }}</span>
-        <span class="stage-label">{{ row.label }}</span>
+        <span class="stage-label">{{ row.label|t if row.label_is_key else row.label }}</span>
         {% if row.disabled %}
           <span class="stage-note">{{ "stage_disabled"|t }}</span>
         {% elif row.status == 'running' %}
-          <span class="stage-note">{{ row.running_note }}</span>
+          <span class="stage-note">{{ ("status_running"|t)|capitalize }} · {{ row.running_elapsed }}</span>
         {% elif row.status == 'skipped' %}
-          <span class="stage-note">{{ "stage_skipped"|t }}{{ (" — " + row.fallback_reason) if row.fallback_reason else "" }}</span>
+          <span class="stage-note">{{ "stage_skipped"|t }}{{ (" — " + (row.skip_note_key|t)) if row.skip_note_key else "" }}</span>
         {% elif row.status == 'succeeded' and row.fallback_used %}
           {% if row.attempts_by_model %}
           <div class="stage-fallback-note">
@@ -28,8 +28,8 @@
           </div>
           {% else %}
           <span class="stage-fallback-note">
-            Requested: <code>{{ row.requested_model }}</code> · Used: <code>{{ row.model }}</code>
-            · Fallback reason: {{ row.fallback_reason }}
+            {{ "requested_label"|t }}: <code>{{ row.requested_model }}</code> · {{ "used_label"|t }}: <code>{{ row.model }}</code>
+            · {{ "fallback_reason_label"|t }}: {{ row.fallback_reason }}
           </span>
           {% endif %}
         {% elif row.status == 'failed' %}
@@ -48,8 +48,8 @@
             </div>
           {% elif row.requested_model %}
             <span class="stage-fallback-note">
-              Requested: <code>{{ row.requested_model }}</code> · Attempts (this try): {{ row.model_attempts }}
-              {%- if row.fallback_reason %} · Reason: {{ row.fallback_reason }}{% endif %}
+              {{ "requested_label"|t }}: <code>{{ row.requested_model }}</code> · {{ "attempts_this_try_label"|t }}: {{ row.model_attempts }}
+              {%- if row.fallback_reason %} · {{ "reason_label"|t }}: {{ row.fallback_reason }}{% endif %}
             </span>
           {% endif %}
           {% if row.skippable and row.fallback_chain_retry %}

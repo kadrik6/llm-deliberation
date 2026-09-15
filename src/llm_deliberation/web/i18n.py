@@ -53,10 +53,52 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "Describe the question or decision...",
         "et": "Kirjelda küsimust või otsust...",
     },
+    "question_helper_text": {
+        "en": "Keep this focused on what you want the system to decide or "
+              "produce. Move background, constraints, and supporting "
+              "details to Context.",
+        "et": "Hoia siin fookus sellel, mida soovid süsteemil otsustada või "
+              "koostada. Taust, piirangud ja toetavad detailid lisa "
+              "konteksti väljale.",
+    },
+    # Shown once the Question field passes RECOMMENDED_QUESTION_LENGTH's
+    # QUESTION_LENGTH_WARNING_THRESHOLD (soft) or RECOMMENDED_QUESTION_LENGTH
+    # itself (stronger) -- see service.py. Both are non-blocking UX nudges,
+    # never a submission block; the hard cap has its own translated error
+    # (question_too_long_error, below).
+    "question_warning_soft": {
+        "en": "This question is getting long. Consider moving background "
+              "information and constraints to Context.",
+        "et": "Küsimus muutub üsna pikaks. Kaalu taustainfo ja piirangute "
+              "tõstmist konteksti väljale.",
+    },
+    "question_warning_hard": {
+        "en": "Your question is longer than the recommended 2000 "
+              "characters. For clearer deliberation, keep the task itself "
+              "here and move supporting detail to Context.",
+        "et": "Küsimus on pikem kui soovituslik 2000 tähemärki. Selgema "
+              "arutelu jaoks jäta siia ülesanne ise ning tõsta toetav taust "
+              "konteksti väljale.",
+    },
+    # Server-side validation error (service.QuestionTooLongError) when
+    # `question` exceeds MAX_QUESTION_LENGTH -- the authoritative check;
+    # HTML maxlength is only a browser-side convenience, never trusted alone.
+    "question_too_long_error": {
+        "en": "Question is too long. Keep the task itself under 4000 "
+              "characters and move background information to Context.",
+        "et": "Küsimus on liiga pikk. Hoia ülesanne alla 4000 tähemärgi ja "
+              "tõsta taustainfo konteksti väljale.",
+    },
     "context_summary": {"en": "Add context (optional)", "et": "Lisa kontekst (valikuline)"},
     "context_placeholder": {
         "en": "Extra background, constraints, prior discussion...",
         "et": "Lisataust, piirangud, varasem arutelu...",
+    },
+    "context_helper_text": {
+        "en": "Use this for background, facts, constraints, examples, and "
+              "other details the models should consider.",
+        "et": "Lisa siia taust, faktid, piirangud, näited ja muud detailid, "
+              "millega mudelid peaksid arvestama.",
     },
     "profile_legend": {"en": "Profile", "et": "Profiil"},
     "profile_economy_blurb": {
@@ -71,6 +113,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "Highest-quality configuration for difficult decisions.",
         "et": "Parima kvaliteediga seadistus keeruliste otsuste jaoks.",
     },
+    # Display names for the `profile` enum ("economy" | "balanced" | "max"),
+    # used anywhere a run's profile is shown as ordinary UI text (the new-run
+    # picker, run metadata, history table). Distinct from
+    # profile_*_blurb above (the descriptive sentence) and from the raw
+    # `profile` value itself, which is never displayed directly -- see the
+    # bilingual UI audit ("stored: profile='balanced' -> Estonian display:
+    # 'Tasakaalustatud'").
+    "profile_name_economy": {"en": "Economy", "et": "Säästlik"},
+    "profile_name_balanced": {"en": "Balanced", "et": "Tasakaalustatud"},
+    "profile_name_max": {"en": "Max", "et": "Maksimaalne"},
     "language_legend": {"en": "Language", "et": "Keel"},
     "language_hint": {
         "en": "Controls the language of the models' generated analysis and final "
@@ -110,6 +162,33 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "elapsed_label": {"en": "Elapsed", "et": "Möödunud aeg"},
     "cost_meta_label": {"en": "Cost", "et": "Maksumus"},
 
+    # Display name for a run's *output* language (record.language), shown as
+    # ordinary UI text describing an attribute of the run ("Language:
+    # inglise" / "Language: English") -- translated according to the
+    # CURRENT UI language, same as every other enum display in this table.
+    # Deliberately distinct from NATIVE_LANGUAGE_NAMES (below), which is the
+    # self-referential "English | Eesti" convention used only for the
+    # language *picker* on the new-run form -- a language name shown in its
+    # own tongue, the universal convention for a language switcher/picker,
+    # never translated into the viewer's UI language.
+    "language_display_en": {"en": "English", "et": "inglise"},
+    "language_display_et": {"en": "Estonian", "et": "eesti"},
+
+    # Shown near run metadata only when the viewer's UI language differs
+    # from this run's own output language (record.language) -- see
+    # web/app.py's run_detail route. Keyed by the run's language: the
+    # dict's own "en"/"et" slots are filled for completeness, but in
+    # practice only the slot matching the *other* language is ever reached,
+    # since the notice is hidden entirely when the languages match.
+    "language_mismatch_run_en": {
+        "en": "This deliberation's content was created in English.",
+        "et": "Selle arutelu sisu loodi inglise keeles. Kasutajaliides on praegu eesti keeles.",
+    },
+    "language_mismatch_run_et": {
+        "en": "This deliberation was generated in Estonian. The interface is currently in English.",
+        "et": "See arutelu loodi eesti keeles.",
+    },
+
     # -- pipeline (in-progress / failed view) ----------------------------
     "stage_disabled": {"en": "disabled", "et": "pole lubatud"},
     "stage_skipped": {"en": "skipped", "et": "vahele jäetud"},
@@ -135,6 +214,37 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "et": "Jäta konsensuse analüüs vahele ja jätka",
     },
     "resume_run": {"en": "Resume run", "et": "Jätka käiku"},
+    "starting_label": {"en": "Starting...", "et": "Käivitub..."},
+
+    # Shown near a skipped stage's status note (see build_pipeline's
+    # skip_note_key) -- a UI-owned explanatory sentence, not the stored
+    # fallback_reason value itself (which stays whatever free text was
+    # persisted at skip time, untranslated, for historical/debug purposes).
+    "skip_note_red_team": {
+        "en": "Skipped after the red-team stage could not complete.",
+        "et": "Vahele jäetud, sest punase meeskonna etapp ei õnnestunud.",
+    },
+    "skip_note_convergence_analysis": {
+        "en": "Skipped after convergence analysis could not complete.",
+        "et": "Vahele jäetud, sest konsensuse analüüs ei õnnestunud.",
+    },
+
+    # -- fallback/provenance labels (backward-compat display; see
+    # partials/pipeline.html and partials/result.html) -----------------
+    "requested_label": {"en": "Requested", "et": "Soovitud"},
+    "used_label": {"en": "Used", "et": "Kasutati"},
+    "fallback_reason_label": {"en": "Fallback reason", "et": "Varulahenduse põhjus"},
+    "attempts_this_try_label": {"en": "Attempts (this try)", "et": "Katsed (see kord)"},
+    "reason_label": {"en": "Reason", "et": "Põhjus"},
+
+    # -- pipeline row labels that mix a provider name with a generic term --
+    # (see presenter.STAGE_GROUPS). The provider name half (e.g. "OpenAI",
+    # "Anthropic", "OpenAI → Anthropic") is never translated -- these are
+    # the generic-term halves only.
+    "pipeline_row_candidate_a": {"en": "Candidate A", "et": "Kandidaat A"},
+    "pipeline_row_candidate_b": {"en": "Candidate B", "et": "Kandidaat B"},
+    "pipeline_row_meta_analysis": {"en": "Meta-analysis", "et": "Metaanalüüs"},
+    "pipeline_row_synthesis": {"en": "Synthesis", "et": "Süntees"},
 
     # -- final answer / decision snapshot ---------------------------------
     "final_answer_heading": {"en": "Final answer", "et": "Lõppvastus"},

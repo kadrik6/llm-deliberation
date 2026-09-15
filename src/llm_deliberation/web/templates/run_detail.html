@@ -9,12 +9,15 @@
   {% endif %}
   <div class="meta-row">
     <span>{{ "run_id_label"|t }}: <code>{{ record.id }}</code></span>
-    <span>{{ "profile_meta_label"|t }}: {{ record.profile }}</span>
-    <span>{{ "language_meta_label"|t }}: {{ language_native_name }}</span>
+    <span>{{ "profile_meta_label"|t }}: {{ ("profile_name_" ~ record.profile)|t }}</span>
+    <span>{{ "language_meta_label"|t }}: {{ ("language_display_" ~ record.language)|t }}</span>
     <span>{{ "red_team_meta_label"|t }}: {{ "red_team_on"|t if record.red_team_enabled else "red_team_off"|t }}</span>
     <span>{{ "elapsed_label"|t }}: {{ elapsed }}</span>
     <span>{{ "cost_meta_label"|t }}: {{ cost }}</span>
   </div>
+  {% if ui_lang != record.language %}
+  <p class="language-mismatch-notice">{{ ("language_mismatch_run_" ~ record.language)|t }}</p>
+  {% endif %}
 </div>
 
 {% if record.status == "succeeded" %}

@@ -27,26 +27,38 @@ STATUS_SYMBOLS: dict[str, str] = {
     "skipped": "⏭",  # ⏭ -- deliberately skipped by the user, not a failure
 }
 
-# (stage_name, display_label) grouped for the pipeline view. Group titles
-# are i18n keys (see web/i18n.py), translated in the template via |t.
-# Individual row labels are left untranslated: several of them are literal
-# provider names (OpenAI/Anthropic/Gemini), which are never translated, and
-# splitting a provider name from a generic label ("Candidate A") within the
-# same row would be inconsistent -- this is a deliberate, disclosed scope
-# boundary for this iteration, not an oversight.
-STAGE_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
-    ("stage_group_analysis", (("analysis_a", "OpenAI"), ("analysis_b", "Anthropic"))),
+# (stage_name, display_label, label_is_key) grouped for the pipeline view.
+# Group titles are i18n keys (see web/i18n.py), translated in the template
+# via |t. Individual row labels are a per-row mix: several are literal
+# provider names (OpenAI/Anthropic/Gemini, or "OpenAI → Anthropic"), which
+# are proper nouns and never translated (label_is_key=False, rendered as-is);
+# the rest ("Candidate A/B", "Meta-analysis", "Synthesis") are UI-owned
+# generic terms and must follow the UI language, so they are i18n keys
+# instead (label_is_key=True, translated in the template via |t) -- see the
+# bilingual UI audit: a mixed label must not stay English merely because
+# half of it (the provider name) is untranslatable.
+STAGE_GROUPS: tuple[tuple[str, tuple[tuple[str, str, bool], ...]], ...] = (
+    (
+        "stage_group_analysis",
+        (("analysis_a", "OpenAI", False), ("analysis_b", "Anthropic", False)),
+    ),
     (
         "stage_group_critique",
         (
-            ("critique_a_of_b", "OpenAI → Anthropic"),
-            ("critique_b_of_a", "Anthropic → OpenAI"),
+            ("critique_a_of_b", "OpenAI → Anthropic", False),
+            ("critique_b_of_a", "Anthropic → OpenAI", False),
         ),
     ),
-    ("stage_group_red_team", (("red_team", "Gemini"),)),
-    ("stage_group_revision", (("revision_a", "Candidate A"), ("revision_b", "Candidate B"))),
-    ("stage_group_convergence", (("convergence_analysis", "Meta-analysis"),)),
-    ("stage_group_synthesis", (("synthesis", "Synthesis"),)),
+    ("stage_group_red_team", (("red_team", "Gemini", False),)),
+    (
+        "stage_group_revision",
+        (
+            ("revision_a", "pipeline_row_candidate_a", True),
+            ("revision_b", "pipeline_row_candidate_b", True),
+        ),
+    ),
+    ("stage_group_convergence", (("convergence_analysis", "pipeline_row_meta_analysis", True),)),
+    ("stage_group_synthesis", (("synthesis", "pipeline_row_synthesis", True),)),
 )
 
 # (stage_name, section_title_key) for the expandable artifact sections shown
@@ -73,6 +85,18 @@ ARTIFACT_SECTIONS: tuple[tuple[str, str], ...] = (
 _SKIP_LABEL_KEYS: dict[str, str] = {
     "red_team": "skip_red_team_and_continue",
     "convergence_analysis": "skip_convergence_and_continue",
+}
+
+# i18n key for a skipped stage's explanatory note, keyed by stage name (see
+# SKIPPABLE_STAGE_NAMES). Deliberately independent of the stage's persisted
+# `fallback_reason` value: that column holds free English text written by
+# service.skip_stage() at skip time (kept as-is, untranslated, for
+# historical/debug purposes -- see mark_stage_skipped), while the *visible*
+# note is a UI-owned sentence derived purely from which stage was skipped,
+# so it renders correctly in either UI language for both old and new runs.
+_SKIP_NOTE_KEYS: dict[str, str] = {
+    "red_team": "skip_note_red_team",
+    "convergence_analysis": "skip_note_convergence_analysis",
 }
 
 # Stages a deliberation cannot produce a trustworthy final answer without --
@@ -277,21 +301,26 @@ def build_pipeline(record: RunRecord) -> list[dict]:
     groups: list[dict] = []
     for title, members in STAGE_GROUPS:
         rows = []
-        for name, label in members:
+        for name, label, label_is_key in members:
             stage = stages.get(name)
             if stage is None:
-                rows.append({"name": name, "label": label, "disabled": True})
+                rows.append({"name": name, "label": label, "label_is_key": label_is_key, "disabled": True})
                 continue
-            running_note = None
+            # Just the elapsed duration -- no English text baked in here.
+            # The "Running"/"Käib" prefix is composed in the template from
+            # the existing status_running translation (see
+            # partials/pipeline.html), so this stays UI-language-agnostic.
+            running_elapsed = None
             if stage.status == "running":
                 # Wall-clock time only -- this deliberately does not claim to
                 # know which internal provider attempt/model is in flight.
-                running_note = f"Running · {format_duration(stage_elapsed_seconds(stage))}"
+                running_elapsed = format_duration(stage_elapsed_seconds(stage))
 
             rows.append(
                 {
                     "name": name,
                     "label": label,
+                    "label_is_key": label_is_key,
                     "disabled": False,
                     "status": stage.status,
                     "symbol": STATUS_SYMBOLS.get(stage.status, "?"),
@@ -305,7 +334,7 @@ def build_pipeline(record: RunRecord) -> list[dict]:
                     "attempt_log": stage.attempt_log,
                     "failure_reason": stage.failure_reason,
                     "attempts_by_model": group_attempts_by_model(stage.attempt_log),
-                    "running_note": running_note,
+                    "running_elapsed": running_elapsed,
                     # A skippable, failed stage gets a "Retry" + "Skip"
                     # pair instead of the single generic retry button.
                     # red_team additionally has a Gemini fallback chain, so
@@ -315,6 +344,7 @@ def build_pipeline(record: RunRecord) -> list[dict]:
                     "skippable": name in SKIPPABLE_STAGE_NAMES and stage.status == "failed",
                     "fallback_chain_retry": name == "red_team",
                     "skip_label_key": _SKIP_LABEL_KEYS.get(name, "skip_and_continue"),
+                    "skip_note_key": _SKIP_NOTE_KEYS.get(name),
                 }
             )
         groups.append({"title": title, "rows": rows})

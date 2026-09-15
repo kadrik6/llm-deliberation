@@ -8,9 +8,43 @@
       var btn = document.getElementById("submit-btn");
       if (btn) {
         btn.disabled = true;
-        btn.textContent = "Starting...";
+        btn.textContent = btn.dataset.startingLabel || "Starting...";
       }
     });
+  }
+
+  // Live character counter + non-blocking soft/hard length guidance for
+  // the Question field -- a UX nudge toward using the separate Context
+  // field for background info, never a submission block. The server
+  // (service.MAX_QUESTION_LENGTH) is the authoritative check; this is
+  // display-only and reads its thresholds/translated text from data-*
+  // attributes the template already rendered (see index.html), so no
+  // string or number here is hard-coded/duplicated from the template.
+  var questionField = document.getElementById("question");
+  if (questionField) {
+    var questionCount = document.getElementById("question-char-count");
+    var questionWarning = document.getElementById("question-warning");
+    var recommendedLength = parseInt(questionField.dataset.recommendedLength, 10) || 0;
+    var warnThreshold = parseInt(questionField.dataset.warnThreshold, 10) || 0;
+
+    var updateQuestionGuidance = function () {
+      var length = questionField.value.length;
+      if (questionCount) questionCount.textContent = length;
+      if (!questionWarning) return;
+      if (length > recommendedLength) {
+        questionWarning.textContent = questionField.dataset.warningHard || "";
+        questionWarning.hidden = false;
+      } else if (length > warnThreshold) {
+        questionWarning.textContent = questionField.dataset.warningSoft || "";
+        questionWarning.hidden = false;
+      } else {
+        questionWarning.hidden = true;
+        questionWarning.textContent = "";
+      }
+    };
+
+    questionField.addEventListener("input", updateQuestionGuidance);
+    updateQuestionGuidance(); // reflect a value already present (e.g. after a validation error round-trip)
   }
 
   // Disable retry/resume buttons on click so a slow response can't be

@@ -59,7 +59,7 @@
   <div class="summary-stats">
     <span>{{ "total_cost_label"|t }}: {{ cost }}</span>
     <span>{{ "duration_label"|t }}: {{ elapsed }}</span>
-    <span>{{ "profile_meta_label"|t }}: {{ record.profile }}</span>
+    <span>{{ "profile_meta_label"|t }}: {{ ("profile_name_" ~ record.profile)|t }}</span>
     <span>{{ "red_team_meta_label"|t }}: {{ "red_team_on"|t if record.red_team_enabled else "red_team_off"|t }}</span>
   </div>
 </section>
@@ -102,10 +102,10 @@
            but no attempt_log (e.g. a historical run predating it, or a test
            fixture that never populated it) -- see Section 9/13. -->
       <p class="artifact-fallback-note">
-        Requested: <code>{{ artifact.requested_model }}</code> &middot;
-        Used: <code>{{ artifact.model }}</code> &middot;
-        Fallback reason: {{ artifact.fallback_reason }} &middot;
-        Attempts (this try): {{ artifact.model_attempts }}
+        {{ "requested_label"|t }}: <code>{{ artifact.requested_model }}</code> &middot;
+        {{ "used_label"|t }}: <code>{{ artifact.model }}</code> &middot;
+        {{ "fallback_reason_label"|t }}: {{ artifact.fallback_reason }} &middot;
+        {{ "attempts_this_try_label"|t }}: {{ artifact.model_attempts }}
       </p>
       {% endif %}
       {% endif %}

@@ -13,7 +13,11 @@ from datetime import datetime, timedelta, timezone
 from llm_deliberation.store import RunRecord, StageRecord
 from llm_deliberation.web import presenter
 
-RUNNING_NOTE_RE = re.compile(r"^Running · (\d+m )?\d+s$")
+# build_pipeline() itself only returns the raw elapsed duration
+# ("running_elapsed") -- the "Running"/"Käib" prefix is composed in the
+# template from the translated status_running key (see
+# partials/pipeline.html), so presenter.py stays UI-language-agnostic.
+RUNNING_ELAPSED_RE = re.compile(r"^(\d+m )?\d+s$")
 
 
 def _stage(status: str, *, name: str = "analysis_a", started_at=None, completed_at=None, **overrides) -> StageRecord:
@@ -85,8 +89,8 @@ def test_running_stage_gets_a_running_note():
 
     row = _row_for(presenter.build_pipeline(run), "analysis_a")
 
-    assert row["running_note"] is not None
-    assert RUNNING_NOTE_RE.match(row["running_note"]), row["running_note"]
+    assert row["running_elapsed"] is not None
+    assert RUNNING_ELAPSED_RE.match(row["running_elapsed"]), row["running_elapsed"]
 
 
 def test_non_running_stages_have_no_running_note():
@@ -99,7 +103,7 @@ def test_non_running_stages_have_no_running_note():
             completed_at=None if status == "pending" else fixed_end,
         )
         row = _row_for(presenter.build_pipeline(_run([stage], status=status)), "analysis_a")
-        assert row["running_note"] is None, f"status={status} should not show a running note"
+        assert row["running_elapsed"] is None, f"status={status} should not show a running note"
 
 
 def test_disabled_stage_has_no_running_note():
@@ -107,7 +111,7 @@ def test_disabled_stage_has_no_running_note():
     # disabled row with no status at all.
     row = _row_for(presenter.build_pipeline(_run([])), "red_team")
     assert row["disabled"] is True
-    assert row.get("running_note") is None
+    assert row.get("running_elapsed") is None
 
 
 # -- deliberation quality (Section 14, items 12-16) -------------------------

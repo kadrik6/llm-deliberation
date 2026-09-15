@@ -19,13 +19,25 @@
 <form method="post" action="/runs" id="new-run-form">
   <label for="question">{{ "question_label"|t }}</label>
   <textarea id="question" name="question" rows="8" required
+    maxlength="{{ question_max_length }}"
+    aria-describedby="question-helper question-counter question-warning"
+    data-recommended-length="{{ question_recommended_length }}"
+    data-warn-threshold="{{ question_warn_threshold }}"
+    data-warning-soft="{{ 'question_warning_soft'|t }}"
+    data-warning-hard="{{ 'question_warning_hard'|t }}"
     placeholder="{{ 'question_placeholder'|t }}">{{ question_value or "" }}</textarea>
+  <p class="hint" id="question-helper">{{ "question_helper_text"|t }}</p>
+  <p class="char-counter" id="question-counter">
+    <span id="question-char-count">0</span> / {{ question_recommended_length }}
+  </p>
+  <p class="field-warning" id="question-warning" aria-live="polite" hidden></p>
 
   <details {% if context_value %}open{% endif %}>
     <summary>{{ "context_summary"|t }}</summary>
     <label for="context" class="sr-only">{{ "context_summary"|t }}</label>
     <textarea id="context" name="context" rows="5"
       placeholder="{{ 'context_placeholder'|t }}">{{ context_value or "" }}</textarea>
+    <p class="hint">{{ "context_helper_text"|t }}</p>
   </details>
 
   <fieldset class="profiles">
@@ -34,7 +46,7 @@
     <label class="profile-option">
       <input type="radio" name="profile" value="{{ key }}"
         {% if key == default_profile %}checked{% endif %}>
-      <span class="profile-name">{{ key|capitalize }}</span>
+      <span class="profile-name">{{ ("profile_name_" ~ key)|t }}</span>
       <span class="profile-blurb">{{ blurb_key|t }}</span>
     </label>
     {% endfor %}
@@ -62,6 +74,6 @@
   </fieldset>
 
   <p class="privacy-disclosure">{{ "privacy_disclosure"|t }}</p>
-  <button type="submit" id="submit-btn">{{ "start_deliberation"|t }}</button>
+  <button type="submit" id="submit-btn" data-starting-label="{{ 'starting_label'|t }}">{{ "start_deliberation"|t }}</button>
 </form>
 {% endblock %}

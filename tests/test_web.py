@@ -1095,8 +1095,10 @@ def test_history_shows_run_language(client, service):
     _submit(client, question="Eestikeelne küsimus", language="et")
 
     body = client.get("/history").text
-    assert "EN" in body
-    assert "ET" in body
+    # Full translated words, not raw "en"/"et" codes -- see the bilingual
+    # UI audit (Section 1: language enum display).
+    assert "English" in body
+    assert "Estonian" in body
 
 
 def test_export_preserves_estonian_content_with_english_report_default(
@@ -1410,3 +1412,336 @@ def test_privacy_disclosure_renders_on_the_new_deliberation_form_in_both_ui_lang
     client.cookies.set("ui_lang", "et")
     et_body = client.get("/").text
     assert "saadetakse töötlemiseks valitud" in et_body
+
+
+# -- bilingual UI audit: UI-owned strings vs persisted run content ----------
+# (focused follow-up audit; see the reliability-pass tests above for the
+# earlier round of fixes)
+
+_FORMERLY_HARDCODED_ENGLISH_LABELS = (
+    "Economy", "Balanced", "Max",  # profile names (index.html picker)
+    "Requested:", "Used:", "Fallback reason:", "Attempts (this try):",  # provenance labels
+    "Starting...",  # new-run submit button
+    "Candidate A", "Candidate B", "Meta-analysis", "Synthesis",  # pipeline row labels
+)
+
+
+def test_estonian_ui_has_no_known_hard_coded_english_labels(
+    client, service, fake_orchestrator_state
+):
+    fake_orchestrator_state["responses"] = {
+        "red_team": {
+            "provider": "Google",
+            "model": "gemini-3.7-flash",
+            "requested_model": "gemini-3.8-flash",
+            "fallback_used": True,
+            "fallback_reason": "HTTP 503 from Gemini (model is overloaded)",
+            "model_attempts": 5,
+            # No attempt_log -- exercises the backward-compat flat display,
+            # the exact spot that still had raw English labels.
+        }
+    }
+    client.cookies.set("ui_lang", "et")
+    succeeded = _submit(client, question="Q?", red_team=True)
+    succeeded_run_id = str(succeeded.url).rstrip("/").rsplit("/", 1)[-1]
+
+    # A separate, failed run exercises the pipeline view (STAGE_GROUPS row
+    # labels, the failed-branch provenance block) -- a succeeded run never
+    # renders partials/pipeline.html at all.
+    fake_orchestrator_state["fail"] = {"analysis_a"}
+    failed = _submit(client, question="Q?", red_team=False)
+    failed_run_id = str(failed.url).rstrip("/").rsplit("/", 1)[-1]
+
+    succeeded_body = client.get(f"/runs/{succeeded_run_id}").text
+    failed_body = client.get(f"/runs/{failed_run_id}").text
+    home_body = client.get("/").text
+    history_body = client.get("/history").text
+
+    for label in _FORMERLY_HARDCODED_ENGLISH_LABELS:
+        assert label not in succeeded_body, f"found hard-coded English label {label!r} in succeeded run (ET UI)"
+        assert label not in failed_body, f"found hard-coded English label {label!r} in failed/pipeline run (ET UI)"
+        assert label not in home_body, f"found hard-coded English label {label!r} on home page (ET UI)"
+        assert label not in history_body, f"found hard-coded English label {label!r} in history (ET UI)"
+
+
+def test_english_ui_still_shows_normal_english_labels(client, service, fake_orchestrator_state):
+    fake_orchestrator_state["fail"] = {"analysis_a"}
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    body = client.get(f"/runs/{run_id}").text
+    assert "Economy" in body
+    assert "Candidate A" in body
+    assert "Meta-analysis" in body
+    assert "Synthesis" in body
+
+
+def test_profile_balanced_renders_translated_in_estonian_ui(client, service):
+    client.cookies.set("ui_lang", "et")
+    response = _submit(client, question="Q?", profile="balanced")
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    body = client.get(f"/runs/{run_id}").text
+    assert "Tasakaalustatud" in body
+    assert "Balanced" not in body
+
+
+def test_language_en_renders_as_inglise_in_estonian_ui(client, service):
+    client.cookies.set("ui_lang", "et")
+    response = _submit(client, question="Q?", language="en")
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    body = client.get(f"/runs/{run_id}").text
+    assert "inglise" in body
+
+
+def test_status_enum_renders_translated_in_estonian_ui(client, service, fake_orchestrator_state):
+    fake_orchestrator_state["fail"] = {"analysis_a"}
+    client.cookies.set("ui_lang", "et")
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    body = client.get(f"/runs/{run_id}").text
+    assert "Ebaõnnestus" in body or "ebaõnnestus" in body
+
+
+def test_convergence_enum_renders_translated_in_estonian_ui(
+    client, service, fake_orchestrator_state
+):
+    fake_orchestrator_state["responses"] = {
+        "convergence_analysis": _convergence_response(convergence="partial")
+    }
+    client.cookies.set("ui_lang", "et")
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    body = client.get(f"/runs/{run_id}").text
+    assert "Osaline konsensus" in body
+
+
+def test_quality_enum_renders_translated_in_estonian_ui(
+    client, service, fake_orchestrator_state
+):
+    fake_orchestrator_state["responses"] = {
+        "revision_a": {"incomplete_reason": "output_truncated"}
+    }
+    client.cookies.set("ui_lang", "et")
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    body = client.get(f"/runs/{run_id}").text
+    assert "Arutelu kvaliteet" in body
+    assert "Puudulik" in body
+
+
+def test_english_historical_model_content_is_byte_for_byte_unchanged_in_estonian_ui(
+    client, service, fake_orchestrator_state
+):
+    exact_text = 'Recommendation — proceed with "Option B" (see § 3.2), 50% confidence.'
+    fake_orchestrator_state["responses"] = {"synthesis": {"text": exact_text}}
+    response = _submit(client, question="Q?", language="en")
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    client.cookies.set("ui_lang", "et")
+    body = client.get(f"/runs/{run_id}").text
+    assert exact_text in body
+
+    stored = service.get_run(run_id)
+    stored_text = next(s.text for s in stored.stages if s.name == "synthesis")
+    assert stored_text == exact_text
+
+
+def test_language_mismatch_notice_appears_when_ui_and_run_language_differ(
+    client, service
+):
+    client.cookies.set("ui_lang", "et")
+    response = _submit(client, question="Q?", language="en")
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    body = client.get(f"/runs/{run_id}").text
+    assert "Kasutajaliides on praegu eesti keeles" in body
+
+
+def test_language_mismatch_notice_absent_when_ui_and_run_language_match(
+    client, service
+):
+    client.cookies.set("ui_lang", "et")
+    response = _submit(client, question="Q?", language="et")
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    body = client.get(f"/runs/{run_id}").text
+    assert "Kasutajaliides on praegu eesti keeles" not in body
+    assert "the interface is currently in" not in body.lower()
+
+
+def test_provider_and_model_names_remain_unchanged_in_estonian_ui(
+    client, service, fake_orchestrator_state
+):
+    client.cookies.set("ui_lang", "et")
+
+    # The pipeline view's STAGE_GROUPS labels a *real* orchestrator would use
+    # ("OpenAI", "Anthropic", "Gemini") -- these are proper nouns and must
+    # never be translated.
+    fake_orchestrator_state["fail"] = {"analysis_a"}
+    failed = _submit(client, question="Q?", red_team=True)
+    failed_run_id = str(failed.url).rstrip("/").rsplit("/", 1)[-1]
+    failed_body = client.get(f"/runs/{failed_run_id}").text
+    assert "OpenAI" in failed_body
+    assert "Anthropic" in failed_body
+    assert "Gemini" in failed_body
+
+    # The actual per-stage provenance shown on a succeeded run's full trace
+    # (FakeOrchestrator reports "Fake"/"fake-model") must also stay untranslated.
+    fake_orchestrator_state["fail"] = set()
+    succeeded = _submit(client, question="Q?", red_team=False)
+    succeeded_run_id = str(succeeded.url).rstrip("/").rsplit("/", 1)[-1]
+    succeeded_body = client.get(f"/runs/{succeeded_run_id}").text
+    assert "Fake" in succeeded_body
+    assert "fake-model" in succeeded_body
+
+
+def test_persisted_enum_and_profile_values_remain_untranslated_in_storage(
+    client, service
+):
+    client.cookies.set("ui_lang", "et")
+    response = _submit(client, question="Q?", profile="balanced", language="en")
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    client.get(f"/runs/{run_id}")  # viewing in ET UI must not touch storage
+
+    record = service.get_run(run_id)
+    assert record.profile == "balanced"
+    assert record.language == "en"
+
+
+def test_switching_ui_language_triggers_no_new_stage_or_model_call(
+    client, service, fake_orchestrator_state
+):
+    response = _submit(client, question="Q?", red_team=True)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+    log_after_run = list(fake_orchestrator_state["log"])
+
+    client.get(f"/runs/{run_id}")
+    client.cookies.set("ui_lang", "et")
+    client.get(f"/runs/{run_id}")
+    client.cookies.set("ui_lang", "en")
+    client.get(f"/runs/{run_id}")
+
+    assert fake_orchestrator_state["log"] == log_after_run
+
+
+# -- Question-length UX guidance (form-level) -------------------------------
+# (Section 11, items 1-5, 11-14)
+
+
+def test_question_helper_text_renders_in_english(client):
+    body = client.get("/").text
+    assert "Move background, constraints, and supporting" in body
+
+
+def test_question_helper_text_renders_in_estonian(client):
+    client.cookies.set("ui_lang", "et")
+    body = client.get("/").text
+    assert "Taust, piirangud ja toetavad detailid" in body
+
+
+def test_context_helper_text_renders_in_english(client):
+    body = client.get("/").text
+    assert "Use this for background, facts, constraints, examples" in body
+
+
+def test_context_helper_text_renders_in_estonian(client):
+    client.cookies.set("ui_lang", "et")
+    body = client.get("/").text
+    assert "Lisa siia taust, faktid, piirangud, näited" in body
+
+
+def test_question_field_has_a_4000_character_browser_maxlength(client):
+    body = client.get("/").text
+    assert re.search(r'<textarea id="question"[^>]*maxlength="4000"', body)
+
+
+def test_question_field_carries_soft_and_hard_warning_thresholds_and_text(client):
+    """The 1200/2000-character warning logic is wired into the DOM via
+    data-* attributes app.js reads (see static/app.js) -- this is the
+    server-rendered half of that logic; app.js's own input-event handling
+    is checked in test_app_js_updates_counter_from_question_textarea_value."""
+    body = client.get("/").text
+    assert 'data-recommended-length="2000"' in body
+    assert 'data-warn-threshold="1200"' in body
+    assert "This question is getting long" in body  # soft warning text (EN)
+    assert "longer than the recommended 2000" in body  # hard warning text (EN)
+
+
+def test_question_field_warning_text_is_estonian_under_estonian_ui(client):
+    client.cookies.set("ui_lang", "et")
+    body = client.get("/").text
+    assert "Küsimus muutub üsna pikaks" in body
+    assert "Küsimus on pikem kui soovituslik 2000" in body
+
+
+def test_question_char_counter_renders_with_recommended_target(client):
+    body = client.get("/").text
+    assert '<span id="question-char-count">0</span> / 2000' in body
+
+
+def test_app_js_updates_counter_from_question_textarea_value():
+    """Static check that the counter is driven by the live textarea value
+    (not a stale/hard-coded number) and updates on every keystroke -- there
+    is no in-process JS engine in this test suite, so this verifies the
+    actual wiring in the shipped script, the same way this codebase already
+    verifies other prompt/script-level invariants by inspecting source."""
+    js_source = (Path(__file__).parent.parent / "src" / "llm_deliberation" / "web" / "static" / "app.js").read_text()
+    assert 'getElementById("question")' in js_source
+    assert "questionField.value.length" in js_source
+    assert 'addEventListener("input"' in js_source
+    assert "questionCount.textContent" in js_source
+
+
+def test_question_between_1200_and_2000_chars_is_accepted_by_the_form(client, service):
+    question = "A" * 1500
+    response = _submit(client, question=question)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+    assert service.get_run(run_id).question == question
+
+
+def test_question_between_2000_and_4000_chars_is_accepted_by_the_form(client, service):
+    question = "A" * 2500
+    response = _submit(client, question=question)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+    assert service.get_run(run_id).question == question
+
+
+def test_oversized_question_submission_shows_translated_error_and_creates_no_run(
+    client, service
+):
+    question = "A" * 4001
+    response = _submit(client, question=question)
+    assert response.status_code == 400
+    assert "Question is too long" in response.text
+    assert service.list_runs() == []
+
+
+def test_oversized_question_submission_shows_estonian_error(client, service):
+    client.cookies.set("ui_lang", "et")
+    question = "A" * 4001
+    response = _submit(client, question=question)
+    assert response.status_code == 400
+    assert "Küsimus on liiga pikk" in response.text
+
+
+def test_oversized_question_submission_makes_no_provider_call(
+    client, service, fake_orchestrator_state
+):
+    question = "A" * 4001
+    _submit(client, question=question)
+    assert fake_orchestrator_state["log"] == []
+
+
+def test_context_persistence_unaffected_by_question_length_guidance_over_http(
+    client, service
+):
+    long_context = ("background detail " * 300).strip()
+    response = _submit(client, question="Short focused question?", context=long_context)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+    assert service.get_run(run_id).context == long_context

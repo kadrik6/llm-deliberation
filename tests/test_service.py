@@ -7,6 +7,7 @@ import pytest
 
 from llm_deliberation.orchestrator import ALL_STAGE_NAMES
 from llm_deliberation.providers import ProviderGenerationError
+from llm_deliberation.service import MAX_QUESTION_LENGTH, QuestionTooLongError
 
 
 def test_create_run_creates_all_stages_when_red_team_enabled(service):
@@ -799,3 +800,66 @@ def test_viewing_a_run_does_not_alter_its_cost_or_quality(service, fake_orchestr
 
     assert first.estimated_total_cost_usd == second.estimated_total_cost_usd
     assert compute_deliberation_quality(first) == compute_deliberation_quality(second)
+
+
+# -- Question length guidance: UX safeguard, not deliberation logic --------
+# (Section 11, items 6-10, 15-16)
+
+
+def test_question_below_hard_max_is_accepted(service):
+    question = "A" * (MAX_QUESTION_LENGTH - 1)
+    run_id = service.create_run(question, "economy", red_team_enabled=False)
+    assert service.get_run(run_id).question == question
+
+
+def test_question_between_recommended_and_hard_max_is_accepted(service):
+    question = "A" * 3000  # between RECOMMENDED_QUESTION_LENGTH (2000) and MAX (4000)
+    run_id = service.create_run(question, "economy", red_team_enabled=False)
+    assert service.get_run(run_id).question == question
+
+
+def test_question_exactly_at_hard_max_is_accepted(service):
+    question = "A" * MAX_QUESTION_LENGTH
+    run_id = service.create_run(question, "economy", red_team_enabled=False)
+    assert service.get_run(run_id).question == question
+
+
+def test_question_above_hard_max_is_rejected(service):
+    question = "A" * (MAX_QUESTION_LENGTH + 1)
+    with pytest.raises(QuestionTooLongError):
+        service.create_run(question, "economy", red_team_enabled=False)
+
+
+def test_rejected_oversized_question_creates_no_run(service):
+    question = "A" * (MAX_QUESTION_LENGTH + 500)
+    with pytest.raises(QuestionTooLongError):
+        service.create_run(question, "economy", red_team_enabled=False)
+    assert service.list_runs() == []
+
+
+def test_rejected_oversized_question_makes_no_provider_call(service, fake_orchestrator_state):
+    question = "A" * (MAX_QUESTION_LENGTH + 500)
+    with pytest.raises(QuestionTooLongError):
+        service.create_run(question, "economy", red_team_enabled=False)
+    assert fake_orchestrator_state["log"] == []
+
+
+def test_context_persistence_is_unaffected_by_question_length_guidance(service):
+    # The length guard only ever inspects `question` -- `context` has no
+    # cap and is stored exactly as given, regardless of question length.
+    long_context = "background " * 500
+    run_id = service.create_run(
+        "Short focused question?", "economy", red_team_enabled=False, context=long_context
+    )
+    assert service.get_run(run_id).context == long_context
+
+
+def test_question_and_context_are_never_merged_in_storage(service):
+    run_id = service.create_run(
+        "The actual task.", "economy", red_team_enabled=False, context="Background facts."
+    )
+    record = service.get_run(run_id)
+    assert record.question == "The actual task."
+    assert record.context == "Background facts."
+    assert "Background facts." not in record.question
+    assert "The actual task." not in record.context

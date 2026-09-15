@@ -27,6 +27,31 @@ def _resolve_db_path(db_path: str | Path | None) -> str | Path:
     return DEFAULT_DB_PATH
 
 
+# UX safeguard, not a limit on legitimate complex questions: a long brief,
+# constraints, and desired output structure all crammed into `question`
+# (rather than the separate `context` field, which has no length cap)
+# encourages very long model responses and increases the risk of a
+# truncated stage (see providers.py's incomplete-response detection). This
+# is the single, authoritative source of truth for the limit -- the web
+# form's HTML maxlength/JS warnings (see web/app.py) are display-only
+# copies of these same numbers, never a separate source of truth.
+MAX_QUESTION_LENGTH = 4000
+RECOMMENDED_QUESTION_LENGTH = 2000
+QUESTION_LENGTH_WARNING_THRESHOLD = 1200
+
+
+class QuestionTooLongError(ValueError):
+    """Raised by create_run() when `question` exceeds MAX_QUESTION_LENGTH.
+
+    A ValueError subclass (not a new exception family) so it is still caught
+    by any existing `except ValueError` call site; a distinct type only so
+    the web layer can recognize this *specific* validation failure and show
+    a translated message instead of this class's raw (English-only) one --
+    see web/app.py's submit_run, which special-cases this type before
+    falling back to str(exc) for every other ValueError create_run raises.
+    """
+
+
 class DeliberationService:
     """Durable, resumable deliberation runs backed by SQLite.
 
@@ -56,6 +81,12 @@ class DeliberationService:
             raise ValueError(f"Unknown profile '{profile}'. Choose one of: {valid}")
         if not question or not question.strip():
             raise ValueError("question must not be empty")
+        if len(question) > MAX_QUESTION_LENGTH:
+            raise QuestionTooLongError(
+                f"Question is too long ({len(question)} characters). Keep the task "
+                f"itself under {MAX_QUESTION_LENGTH} characters and move background "
+                "information to Context."
+            )
         if language not in SUPPORTED_LANGUAGES:
             valid = ", ".join(sorted(SUPPORTED_LANGUAGES))
             raise ValueError(f"Unknown language '{language}'. Choose one of: {valid}")
