@@ -111,18 +111,24 @@ def _build_convergence_provider(settings: Settings) -> Provider:
             model=settings.convergence_model,
             max_output_tokens=settings.max_output_tokens,
             effort=settings.openai_effort,
+            timeout_seconds=settings.provider_timeout_seconds,
+            max_retries=settings.provider_max_retries,
         )
     if settings.convergence_provider == "anthropic":
         return AnthropicProvider(
             model=settings.convergence_model,
             max_output_tokens=settings.max_output_tokens,
             effort=settings.anthropic_effort,
+            timeout_seconds=settings.provider_timeout_seconds,
+            max_retries=settings.provider_max_retries,
         )
     if settings.convergence_provider == "gemini":
         return GeminiFallbackProvider(
             models=[settings.convergence_model, *settings.gemini_fallback_models],
             max_output_tokens=settings.max_output_tokens,
             thinking_level=settings.gemini_thinking_level,
+            timeout_seconds=settings.provider_timeout_seconds,
+            max_retries=settings.provider_max_retries,
         )
     raise ValueError(f"Unknown convergence_provider: {settings.convergence_provider!r}")
 
@@ -172,16 +178,22 @@ class DeliberationOrchestrator:
             model=settings.openai_model,
             max_output_tokens=settings.max_output_tokens,
             effort=settings.openai_effort,
+            timeout_seconds=settings.provider_timeout_seconds,
+            max_retries=settings.provider_max_retries,
         )
         self.b = AnthropicProvider(
             model=settings.anthropic_model,
             max_output_tokens=settings.max_output_tokens,
             effort=settings.anthropic_effort,
+            timeout_seconds=settings.provider_timeout_seconds,
+            max_retries=settings.provider_max_retries,
         )
         self.red = GeminiFallbackProvider(
             models=[settings.gemini_model, *settings.gemini_fallback_models],
             max_output_tokens=settings.max_output_tokens,
             thinking_level=settings.gemini_thinking_level,
+            timeout_seconds=settings.provider_timeout_seconds,
+            max_retries=settings.provider_max_retries,
         )
         self.convergence = _build_convergence_provider(settings)
 
@@ -222,19 +234,46 @@ class DeliberationOrchestrator:
         ):
             recovery_system = system + "\n\n" + prompts.truncation_recovery_instruction(language)
             sunk_cost = response.estimated_cost_usd
+            initial_model = response.model
+            # Provenance for the initial (truncated, paid, discarded) attempt
+            # -- see providers.group_attempts_by_model's phase-aware sibling
+            # (presenter.attempt_log_phases) for how this is rendered. Built
+            # before the recovery call so it is available whether that call
+            # succeeds, fails, or itself raises.
+            initial_attempt = {
+                "phase": "initial",
+                "model": initial_model,
+                "outcome": "output_truncated",
+                "estimated_cost_usd": sunk_cost,
+            }
             try:
                 response = await _call(provider, system=recovery_system, prompt=prompt, **kwargs)
             except Exception as exc:
                 # The retry attempt itself raised (e.g. a transport error) --
                 # preserve the first (discarded, truncated) attempt's cost
                 # rather than letting it vanish along with a bare exception
-                # that carries no cost/provenance of its own.
+                # that carries no cost/provenance of its own. attempts=2:
+                # two real paid-attempt-eligible calls were made for this
+                # stage execution (the first paid and truncated, the second
+                # attempted but never returned a usable response) -- see
+                # Section 3/4 of the follow-up reliability investigation:
+                # `model_attempts`/`Attempts (this try)` must count actual
+                # provider calls, not just "did the final call succeed".
                 raise ProviderGenerationError(
                     f"{stage}: response was truncated, and the one bounded "
                     f"recovery retry failed: {exc}",
-                    requested_model=response.requested_model or response.model,
+                    requested_model=initial_model,
                     attempts=2,
-                    attempt_log=[],
+                    attempt_log=[
+                        initial_attempt,
+                        {
+                            "phase": "recovery",
+                            "model": initial_model,
+                            "outcome": "provider_error",
+                            "estimated_cost_usd": 0.0,
+                            "error": str(exc),
+                        },
+                    ],
                     fallback_used=False,
                     fallback_reason=None,
                     estimated_cost_usd=sunk_cost,
@@ -243,6 +282,17 @@ class DeliberationOrchestrator:
             # Whether the retry finally succeeded or is still incomplete, the
             # first attempt's cost was genuinely spent and must stay in the
             # run's cost accounting -- never silently dropped.
+            recovery_cost = response.estimated_cost_usd
+            response.model_attempts = 2
+            response.attempt_log = [
+                initial_attempt,
+                {
+                    "phase": "recovery",
+                    "model": response.model,
+                    "outcome": "succeeded" if response.incomplete_reason is None else response.incomplete_reason,
+                    "estimated_cost_usd": recovery_cost,
+                },
+            ]
             response.estimated_cost_usd += sunk_cost
 
         if stage == "convergence_analysis":

@@ -604,3 +604,83 @@ def test_deliverable_first_rule_introduces_no_new_stage_or_api_call():
     assert not any(line.strip().startswith("import ") for line in source.splitlines())
     assert "await" not in source
     assert "requests" not in source and "client" not in source.lower()
+
+
+# -- stage output discipline (follow-up reliability investigation) ---------
+# A real run truncated in independent-analysis because the prompt had no
+# conciseness discipline at all: it invited restating context, drafting a
+# near-final deliverable, and unbounded elaboration. Section 14, items 1-5.
+
+
+def test_independent_analysis_prompt_says_not_to_restate_context():
+    from llm_deliberation.prompts import independent_analysis
+
+    text = independent_analysis("Q?").lower()
+    assert "do not restate" in text or "do not repeat" in text
+
+
+def test_independent_analysis_prompt_says_not_to_produce_final_deliverable():
+    from llm_deliberation.prompts import independent_analysis
+
+    text = independent_analysis("Q?").lower()
+    assert "final deliverable" in text
+    assert "not try to produce" in text or "do not draft" in text
+
+
+def test_independent_analysis_prompt_has_a_concise_word_target():
+    from llm_deliberation.prompts import independent_analysis
+
+    text = independent_analysis("Q?")
+    assert "1200" in text and "1800" in text
+    assert "words" in text.lower()
+
+
+def test_independent_analysis_prompt_is_not_task_specific():
+    # The output-discipline block itself must be identical regardless of
+    # what the user's question actually asks for (e.g. drafting an email
+    # vs. a purely analytical question) -- only the QUESTION section
+    # differs; the discipline rules are generic, not keyed to a deliverable
+    # type the user happened to mention.
+    from llm_deliberation.prompts import independent_analysis
+
+    email_prompt = independent_analysis("Draft an email to the vendor.")
+    generic_prompt = independent_analysis("Should we build or buy?")
+
+    def discipline_block(text: str) -> str:
+        return text.split("Output discipline:")[1].split("Return:")[0]
+
+    assert discipline_block(email_prompt) == discipline_block(generic_prompt)
+
+
+def test_critique_prompt_does_not_ask_for_a_full_rewrite():
+    from llm_deliberation.prompts import critique
+
+    text = critique("Q?", "candidate answer").lower()
+    assert "do not rewrite" in text or "do not reproduce" in text
+    assert "at length" in text or "in full" in text
+
+
+def test_revision_prompt_emphasizes_material_updates_over_full_replay():
+    from llm_deliberation.prompts import revision
+
+    text = revision("Q?", "own answer", "peer critique", None).lower()
+    assert "material" in text
+    assert "do not replay" in text or "not a full restatement" in text or "only the material updates" in text
+
+
+def test_red_team_prompt_has_a_concise_word_target():
+    from llm_deliberation.prompts import red_team
+
+    text = red_team("Q?", "candidate a", "candidate b")
+    assert "500" in text and "800" in text
+
+
+def test_convergence_and_synthesis_prompts_are_unchanged_in_structure():
+    # Section 2 explicitly exempts these: convergence already has structured
+    # (schema-validated) output, and synthesis is where the complete
+    # deliverable belongs -- the deliverable-first rule there must survive.
+    from llm_deliberation.prompts import synthesis
+
+    text = synthesis("Q?", "rev a", "rev b", None)
+    assert "deliverable" in text.lower()
+    assert "FIRST" in text

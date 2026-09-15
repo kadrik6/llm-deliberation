@@ -88,6 +88,8 @@ class Settings:
     anthropic_effort: str
     gemini_thinking_level: str
     max_output_tokens: int
+    provider_timeout_seconds: float
+    provider_max_retries: int
 
     @classmethod
     def load(
@@ -153,6 +155,25 @@ class Settings:
             anthropic_effort=os.getenv("ANTHROPIC_EFFORT", "high"),
             gemini_thinking_level=os.getenv("GEMINI_THINKING_LEVEL", "high"),
             max_output_tokens=int(os.getenv("MAX_OUTPUT_TOKENS", "5000")),
+            # Explicit, bounded per-HTTP-attempt timeout and SDK-level retry
+            # count for OpenAI/Anthropic/Gemini clients (see providers.py).
+            # Both openai 3.13.0 and anthropic 1.5.0 otherwise default to a
+            # 600s read timeout with up to 2 automatic SDK-level retries --
+            # empirically confirmed via openai._constants.DEFAULT_TIMEOUT /
+            # DEFAULT_MAX_RETRIES and the anthropic equivalents -- so a single
+            # stalled call could silently consume up to 600s x 3 = 1800s
+            # before ever raising, and this app's own one-shot truncation
+            # recovery (orchestrator.run_stage) can issue a second such call
+            # on top of that. 180s x (1 retry + 1 initial) = 360s worst case
+            # per logical call, x2 logical calls (initial + recovery) = a
+            # ~12 minute hard ceiling on a single stage, replacing a
+            # previously unbounded (observed: ~38 minutes; theoretical
+            # worst case: ~1 hour) one. 180s is generous enough for a normal
+            # "high effort" reasoning response while still bounding a stuck
+            # or pathologically slow request; still overridable via env
+            # var for operators who need more headroom.
+            provider_timeout_seconds=float(os.getenv("PROVIDER_TIMEOUT_SECONDS", "180")),
+            provider_max_retries=int(os.getenv("PROVIDER_MAX_RETRIES", "1")),
         )
 
     def validate_keys(self) -> None:

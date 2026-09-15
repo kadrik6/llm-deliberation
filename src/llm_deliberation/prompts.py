@@ -68,15 +68,22 @@ _TRUNCATION_RECOVERY_INSTRUCTIONS: dict[str, str] = {
     "en": (
         "IMPORTANT: your previous response to this exact task was cut off before "
         "it finished, because it exceeded the available response length. Answer "
-        "again from scratch, complete and self-contained, but noticeably more "
-        "concise, so the full answer fits within the available length. Do not "
-        "mention this instruction or the previous cut-off response."
+        "again from scratch, but this time: do not repeat or restate the "
+        "supplied question/context back; keep only the material reasoning and "
+        "drop non-essential explanation; be substantially shorter than your "
+        "previous attempt. A shorter, complete answer is far more useful than a "
+        "longer one that gets cut off again -- finishing matters more than "
+        "thoroughness here. Do not mention this instruction or the previous "
+        "cut-off response."
     ),
     "et": (
         "OLULINE: sinu eelmine vastus samale ülesandele katkes enne lõppu, kuna "
-        "see ületas lubatud vastuse pikkuse. Vasta uuesti algusest peale, "
-        "terviklikult, kuid märgatavalt lühemalt, et kogu vastus mahuks lubatud "
-        "pikkuse piiresse. Ära maini seda juhist ega eelmist katkenud vastust."
+        "see ületas lubatud vastuse pikkuse. Vasta uuesti algusest peale, kuid "
+        "seekord: ära korda ega taasesita küsimust/konteksti; jäta alles ainult "
+        "sisuline põhjendus ja jäta välja mittevajalik selgitus; ole eelmisest "
+        "katsest märgatavalt lühem. Lühem, terviklik vastus on palju kasulikum "
+        "kui pikem, mis uuesti katkeb -- siin on lõpetamine olulisem kui "
+        "põhjalikkus. Ära maini seda juhist ega eelmist katkenud vastust."
     ),
 }
 
@@ -94,9 +101,27 @@ QUESTION
 
 Work independently. You have not seen the other candidate's answer.
 
+This is an early analytical stage, not the final answer -- another model will
+critique this, and you will revise it in a later stage. Do not try to produce
+a polished, complete, final deliverable here.
+
+Output discipline:
+- Do not restate or repeat back the supplied question/context -- the reader
+  already has it in front of them.
+- Do not draft the user's final deliverable (e.g. do not write out the actual
+  email/document/code/report here) -- describe your recommended content and
+  reasoning instead; full drafting happens in a later stage.
+- Extract only the decision-relevant facts and constraints; do not walk
+  through every supplied detail one by one.
+- Prefer a compact synthesis over exhaustive coverage: state your strongest
+  points once, well, rather than restating them from multiple angles.
+- Target roughly 1200-1800 words, preferably shorter. Finish comfortably
+  within that target rather than using all available space -- an unfinished
+  answer is worse than a shorter complete one.
+
 Return:
 1. Best current conclusion or recommendation.
-2. Core reasoning.
+2. Core reasoning (the few points that matter most, not everything considered).
 3. Critical assumptions.
 4. Strongest counterargument or alternative.
 5. Important uncertainties / facts that would need verification.
@@ -114,7 +139,10 @@ ORIGINAL QUESTION
 CANDIDATE ANSWER
 {candidate}
 
-Act as an adversarial but fair reviewer. Do NOT produce a replacement answer yet.
+Act as an adversarial but fair reviewer. Do NOT produce a replacement answer,
+and do NOT rewrite or reproduce the candidate's answer at length -- critique
+it; refer back to specific points briefly (a short quote or paraphrase is
+enough) rather than restating its reasoning in full.
 
 Inspect:
 - logical gaps;
@@ -126,7 +154,9 @@ Inspect:
 - practical implementation risks;
 - places where the candidate is probably right and should NOT be changed.
 
-Prioritize material issues. Explain why each criticism matters.
+Prioritize material issues over minor ones; do not manufacture criticism just
+to fill space. Target roughly 600-900 words, preferably shorter. Explain why
+each criticism matters.
 """.strip()
 
 
@@ -143,10 +173,13 @@ CANDIDATE B
 
 You are the independent red-team reviewer.
 
-Do not choose a winner and do not merely repeat their disagreements.
+Do not choose a winner and do not merely repeat their disagreements. Do not
+restate either candidate's answer in full.
 Your specific job is to find CORRELATED FAILURE MODES — things both candidates
 may be getting wrong because they share assumptions, framing, missing evidence,
 or conventional wisdom.
+
+Be concise: target roughly 500-800 words, preferably shorter.
 
 Return:
 1. Shared assumptions worth challenging.
@@ -177,14 +210,20 @@ PEER CRITIQUE OF YOUR ANALYSIS
 INDEPENDENT RED-TEAM REPORT
 {red}
 
-Revise your answer after considering the feedback.
+Revise your position after considering the feedback.
 
 Do not accept criticism automatically. Keep valid original reasoning, correct
 material weaknesses, and reject bad criticism when warranted.
 
+Output discipline: state your revised position and what changed -- do not
+replay your full original reasoning again; refer back to it only where it
+changed. Focus on MATERIAL updates (a changed conclusion, a corrected error, a
+materially different trade-off); do not restate points that are unchanged.
+Target roughly 600-900 words, preferably shorter.
+
 Return:
 1. Revised conclusion.
-2. Revised reasoning.
+2. What changed and why (only the material updates -- not a full restatement).
 3. Which criticism materially changed the answer, if any.
 4. Remaining uncertainty.
 5. Strongest case against the revised conclusion.

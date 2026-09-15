@@ -409,6 +409,22 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     },
     "fallback_indicator": {"en": "↓ fallback", "et": "↓ varuvariant"},
 
+    # -- truncation-recovery provenance (initial generation vs the one
+    # bounded concise-retry attempt -- see orchestrator.run_stage and
+    # presenter.attempt_log_phases). Distinct from the Gemini fallback-chain
+    # labels above: this is the *same* model called twice, not a different
+    # model being substituted in.
+    "attempt_phase_initial": {"en": "Initial generation", "et": "Esialgne genereerimine"},
+    "attempt_phase_recovery": {
+        "en": "Concise recovery", "et": "Lühendatud kordusgenereerimine",
+    },
+    "attempt_outcome_output_truncated": {
+        "en": "output truncated at max tokens", "et": "vastus katkes tokenite piirmäära tõttu",
+    },
+    "attempt_outcome_empty_output": {"en": "output empty", "et": "vastus tühi"},
+    "attempt_outcome_succeeded": {"en": "succeeded", "et": "õnnestus"},
+    "attempt_outcome_provider_error": {"en": "request failed", "et": "päring ebaõnnestus"},
+
     # -- privacy disclosure (near Start Deliberation) ------------------------
     "privacy_disclosure": {
         "en": "Your question and context are sent to the selected AI providers "

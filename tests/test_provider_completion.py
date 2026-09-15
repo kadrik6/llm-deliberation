@@ -189,6 +189,15 @@ def test_recovery_retry_succeeds_and_preserves_first_attempt_cost(monkeypatch):
     assert first_system != second_system
     assert prompts.truncation_recovery_instruction("en") in second_system
 
+    # Provenance: exactly 2 real attempts, distinguishable initial/recovery
+    # phases -- never collapsed into a misleading "Attempts (this try): 1"
+    # (see the follow-up reliability investigation, Section 3/4).
+    assert response.model_attempts == 2
+    assert response.attempt_log == [
+        {"phase": "initial", "model": "gpt-5.6-sol", "outcome": "output_truncated", "estimated_cost_usd": 0.01},
+        {"phase": "recovery", "model": "gpt-5.6-sol", "outcome": "succeeded", "estimated_cost_usd": 0.02},
+    ]
+
 
 # -- 6: a second truncation results in a failed (still-incomplete) stage --
 
@@ -204,6 +213,11 @@ def test_recovery_retry_still_truncated_stays_incomplete(monkeypatch):
     assert response.incomplete_reason == "output_truncated"
     assert response.estimated_cost_usd == pytest.approx(0.01 + 0.02)
     assert len(provider.calls) == 2  # never more than the one bounded retry
+    assert response.model_attempts == 2
+    assert response.attempt_log == [
+        {"phase": "initial", "model": "gpt-5.6-sol", "outcome": "output_truncated", "estimated_cost_usd": 0.01},
+        {"phase": "recovery", "model": "gpt-5.6-sol", "outcome": "output_truncated", "estimated_cost_usd": 0.02},
+    ]
 
 
 def test_recovery_retry_that_raises_preserves_sunk_cost(monkeypatch):
@@ -224,6 +238,12 @@ def test_recovery_retry_that_raises_preserves_sunk_cost(monkeypatch):
 
     assert excinfo.value.estimated_cost_usd == pytest.approx(0.01)
     assert excinfo.value.reason == "output_truncated"
+    assert excinfo.value.attempts == 2
+    assert excinfo.value.attempt_log[0] == {
+        "phase": "initial", "model": "gpt-5.6-sol", "outcome": "output_truncated", "estimated_cost_usd": 0.01,
+    }
+    assert excinfo.value.attempt_log[1]["phase"] == "recovery"
+    assert excinfo.value.attempt_log[1]["outcome"] == "provider_error"
 
 
 # -- 7: recovery never loops indefinitely ----------------------------------
@@ -296,3 +316,200 @@ def test_recovery_is_skipped_for_gemini_fallback_provider(monkeypatch):
     response = asyncio.run(orch.run_stage("red_team", "Q?", {"analysis_a": "a", "analysis_b": "b"}, language="en"))
     assert response.incomplete_reason is None
     assert fake.calls == 2  # handled entirely inside GeminiFallbackProvider's own loop
+
+
+# -- bounded provider timeout/retries (Section 6: the 38-minute investigation)
+# openai 3.13.0 and anthropic 1.5.0 both default to a 600s read timeout with
+# up to 2 automatic SDK-level retries (openai._constants.DEFAULT_TIMEOUT /
+# DEFAULT_MAX_RETRIES and the anthropic equivalents) -- confirmed by direct
+# inspection, not assumed. Without an explicit override, a single stalled
+# call is effectively unbounded from this application's perspective, and
+# the one-shot truncation recovery above can issue a second such call on
+# top of that. These tests confirm the client is always constructed with an
+# explicit, deterministic bound instead of silently inheriting the SDK
+# default -- no real network call is made in any of them.
+
+
+def test_openai_provider_sets_an_explicit_timeout_and_max_retries(monkeypatch):
+    from llm_deliberation.providers import OpenAIProvider
+
+    captured = {}
+
+    class FakeUsage:
+        input_tokens = 1
+        output_tokens = 1
+
+    class FakeResponse:
+        status = "completed"
+        output_text = "ok"
+        usage = FakeUsage()
+
+    class FakeResponses:
+        def create(self, **kwargs):
+            return FakeResponse()
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.responses = FakeResponses()
+
+    monkeypatch.setattr("openai.OpenAI", FakeClient)
+    provider = OpenAIProvider("gpt-5.6-sol", 5000, timeout_seconds=42.0, max_retries=3)
+    provider.generate(system="s", prompt="p")
+
+    assert captured["timeout"] == 42.0
+    assert captured["max_retries"] == 3
+
+
+def test_openai_provider_defaults_are_bounded_not_the_sdk_default(monkeypatch):
+    from llm_deliberation.providers import (
+        DEFAULT_PROVIDER_MAX_RETRIES,
+        DEFAULT_PROVIDER_TIMEOUT_SECONDS,
+        OpenAIProvider,
+    )
+
+    captured = {}
+
+    class FakeUsage:
+        input_tokens = 1
+        output_tokens = 1
+
+    class FakeResponse:
+        status = "completed"
+        output_text = "ok"
+        usage = FakeUsage()
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.responses = type("R", (), {"create": lambda self, **kw: FakeResponse()})()
+
+    monkeypatch.setattr("openai.OpenAI", FakeClient)
+    OpenAIProvider("gpt-5.6-sol", 5000).generate(system="s", prompt="p")
+
+    assert captured["timeout"] == DEFAULT_PROVIDER_TIMEOUT_SECONDS
+    assert captured["max_retries"] == DEFAULT_PROVIDER_MAX_RETRIES
+    # Deterministic bound, well under the SDK's own 600s/2-retries default.
+    assert DEFAULT_PROVIDER_TIMEOUT_SECONDS < 600
+    assert DEFAULT_PROVIDER_MAX_RETRIES <= 2
+
+
+def test_anthropic_provider_sets_an_explicit_timeout_and_max_retries(monkeypatch):
+    from llm_deliberation.providers import AnthropicProvider
+
+    captured = {}
+
+    class FakeBlock:
+        type = "text"
+        text = "ok"
+
+    class FakeUsage:
+        input_tokens = 1
+        output_tokens = 1
+
+    class FakeMessage:
+        content = [FakeBlock()]
+        stop_reason = "end_turn"
+        usage = FakeUsage()
+
+    class FakeMessages:
+        def create(self, **kwargs):
+            return FakeMessage()
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.messages = FakeMessages()
+
+    monkeypatch.setattr("anthropic.Anthropic", FakeClient)
+    provider = AnthropicProvider("claude-opus-5", 5000, timeout_seconds=42.0, max_retries=3)
+    provider.generate(system="s", prompt="p")
+
+    assert captured["timeout"] == 42.0
+    assert captured["max_retries"] == 3
+
+
+def test_gemini_provider_sets_an_explicit_http_timeout(monkeypatch):
+    from llm_deliberation.providers import GeminiProvider
+
+    captured = {}
+
+    class FakeUsage:
+        total_input_tokens = 1
+        total_output_tokens = 1
+        total_thought_tokens = 0
+
+    class FakeInteraction:
+        status = "completed"
+        output_text = "ok"
+        usage = FakeUsage()
+
+    class FakeInteractions:
+        def create(self, **kwargs):
+            return FakeInteraction()
+
+    class FakeClient:
+        def __init__(self, http_options=None, **kwargs):
+            captured.update(http_options or {})
+            self.interactions = FakeInteractions()
+
+    import google.genai
+
+    monkeypatch.setattr(google.genai, "Client", FakeClient)
+    provider = GeminiProvider("gemini-3.8-flash", 5000, timeout_seconds=30.0)
+    provider.generate(system="s", prompt="p")
+
+    assert captured["timeout"] == 30000  # milliseconds
+
+
+def test_settings_env_vars_override_provider_timeout_and_retries(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    monkeypatch.setenv("PROVIDER_TIMEOUT_SECONDS", "90")
+    monkeypatch.setenv("PROVIDER_MAX_RETRIES", "0")
+    from llm_deliberation.config import Settings
+
+    settings = Settings.load(profile_override="economy")
+    assert settings.provider_timeout_seconds == 90.0
+    assert settings.provider_max_retries == 0
+
+
+# -- provenance distinguishes initial generation from recovery -------------
+# (presenter.attempt_log_phases -- Section 4/11)
+
+
+def test_attempt_log_phases_recognizes_a_recovery_log():
+    from llm_deliberation.web.presenter import attempt_log_phases
+
+    log = [
+        {"phase": "initial", "model": "claude-opus-5", "outcome": "output_truncated", "estimated_cost_usd": 0.01},
+        {"phase": "recovery", "model": "claude-opus-5", "outcome": "succeeded", "estimated_cost_usd": 0.02},
+    ]
+    assert attempt_log_phases(log) == log
+
+
+def test_attempt_log_phases_returns_none_for_gemini_style_log():
+    from llm_deliberation.web.presenter import attempt_log_phases
+
+    gemini_log = [{"model": "gemini-3.8-flash", "attempt_number": 1, "outcome": "succeeded"}]
+    assert attempt_log_phases(gemini_log) is None
+
+
+def test_attempt_log_phases_returns_none_for_empty_or_missing_log():
+    from llm_deliberation.web.presenter import attempt_log_phases
+
+    assert attempt_log_phases(None) is None
+    assert attempt_log_phases([]) is None
+
+
+def test_group_attempts_by_model_ignores_phase_based_logs():
+    from llm_deliberation.web.presenter import group_attempts_by_model
+
+    log = [
+        {"phase": "initial", "model": "claude-opus-5", "outcome": "output_truncated", "estimated_cost_usd": 0.01},
+        {"phase": "recovery", "model": "claude-opus-5", "outcome": "succeeded", "estimated_cost_usd": 0.02},
+    ]
+    # Grouping by model would collapse both phases into one misleading
+    # "2 attempts" group -- the dedicated phase-based template rendering
+    # must be used instead (see partials/pipeline.html / result.html).
+    assert group_attempts_by_model(log) == []

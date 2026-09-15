@@ -34,6 +34,7 @@ from llm_deliberation.web.presenter import (
     ARTIFACT_SECTIONS,
     PROFILE_BLURB_KEYS,
     PROFILE_ORDER,
+    attempt_log_phases,
     build_pipeline,
     compute_deliberation_quality,
     elapsed_seconds,
@@ -125,6 +126,7 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
     # it never infers meaning, just groups by existing heading boundaries.
     templates.env.filters["split_sections"] = split_synthesis_sections
     templates.env.filters["group_attempts_by_model"] = group_attempts_by_model
+    templates.env.filters["attempt_log_phases"] = attempt_log_phases
 
     @jinja2.pass_context
     def _translate_filter(context: jinja2.runtime.Context, key: str) -> str:

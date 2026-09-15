@@ -10,12 +10,31 @@ from llm_deliberation.pricing import estimate_cost
 from llm_deliberation.types import ModelResponse, Usage
 
 
+# Bounds a single HTTP attempt (both openai 3.13.0 and anthropic 1.5.0
+# otherwise default to a 600s read timeout with up to 2 automatic SDK-level
+# retries -- see config.Settings.load's comment for the full empirical
+# justification). Used as the fallback when a Provider is constructed
+# without explicit timeout_seconds/max_retries (e.g. directly in a test),
+# not just when going through Settings/the orchestrator.
+DEFAULT_PROVIDER_TIMEOUT_SECONDS = 180.0
+DEFAULT_PROVIDER_MAX_RETRIES = 1
+
+
 class Provider(ABC):
     provider_name: str
 
-    def __init__(self, model: str, max_output_tokens: int):
+    def __init__(
+        self,
+        model: str,
+        max_output_tokens: int,
+        *,
+        timeout_seconds: float = DEFAULT_PROVIDER_TIMEOUT_SECONDS,
+        max_retries: int = DEFAULT_PROVIDER_MAX_RETRIES,
+    ):
         self.model = model
         self.max_output_tokens = max_output_tokens
+        self.timeout_seconds = timeout_seconds
+        self.max_retries = max_retries
 
     @abstractmethod
     def generate(self, *, system: str, prompt: str) -> ModelResponse:
@@ -66,14 +85,23 @@ class OpenAIProvider(Provider):
         model: str,
         max_output_tokens: int,
         effort: str = "high",
+        *,
+        timeout_seconds: float = DEFAULT_PROVIDER_TIMEOUT_SECONDS,
+        max_retries: int = DEFAULT_PROVIDER_MAX_RETRIES,
     ):
-        super().__init__(model, max_output_tokens)
+        super().__init__(
+            model, max_output_tokens, timeout_seconds=timeout_seconds, max_retries=max_retries
+        )
         self.effort = effort
 
     def generate(self, *, system: str, prompt: str) -> ModelResponse:
         from openai import OpenAI
 
-        client = OpenAI()
+        # Explicit timeout/max_retries -- see DEFAULT_PROVIDER_TIMEOUT_SECONDS's
+        # docstring: without these, the SDK's own defaults (600s read timeout
+        # x up to 3 attempts) leave a single call effectively unbounded from
+        # this application's point of view.
+        client = OpenAI(timeout=self.timeout_seconds, max_retries=self.max_retries)
         response = client.responses.create(
             model=self.model,
             instructions=system,
@@ -123,14 +151,24 @@ class AnthropicProvider(Provider):
         model: str,
         max_output_tokens: int,
         effort: str = "high",
+        *,
+        timeout_seconds: float = DEFAULT_PROVIDER_TIMEOUT_SECONDS,
+        max_retries: int = DEFAULT_PROVIDER_MAX_RETRIES,
     ):
-        super().__init__(model, max_output_tokens)
+        super().__init__(
+            model, max_output_tokens, timeout_seconds=timeout_seconds, max_retries=max_retries
+        )
         self.effort = effort
 
     def generate(self, *, system: str, prompt: str) -> ModelResponse:
         import anthropic
 
-        client = anthropic.Anthropic()
+        # Explicit timeout/max_retries -- see DEFAULT_PROVIDER_TIMEOUT_SECONDS's
+        # docstring: without these, the SDK's own defaults (600s read timeout
+        # x up to 3 attempts) leave a single call effectively unbounded from
+        # this application's point of view -- the empirically-confirmed root
+        # cause of a real run stalling for ~38 minutes in this stage.
+        client = anthropic.Anthropic(timeout=self.timeout_seconds, max_retries=self.max_retries)
         message = client.messages.create(
             model=self.model,
             max_tokens=self.max_output_tokens,
@@ -187,8 +225,13 @@ class GeminiProvider(Provider):
         model: str,
         max_output_tokens: int,
         thinking_level: str = "high",
+        *,
+        timeout_seconds: float = DEFAULT_PROVIDER_TIMEOUT_SECONDS,
+        max_retries: int = DEFAULT_PROVIDER_MAX_RETRIES,
     ):
-        super().__init__(model, max_output_tokens)
+        super().__init__(
+            model, max_output_tokens, timeout_seconds=timeout_seconds, max_retries=max_retries
+        )
         self.thinking_level = thinking_level
 
     def generate(self, *, system: str, prompt: str) -> ModelResponse:
@@ -201,9 +244,15 @@ class GeminiProvider(Provider):
         # "no retries" (retry_args(None) -> stop_after_attempt(1)), but
         # pinning it explicitly means GeminiFallbackProvider's own bounded
         # retry-then-fallback policy is always the only retry logic in play,
-        # even if the SDK's default ever changes.
+        # even if the SDK's default ever changes. timeout is in milliseconds
+        # per this SDK's HttpOptions -- unset by default (no bound at all);
+        # explicit here for the same reason as OpenAI/AnthropicProvider.
         client = genai.Client(
-            http_options={"api_version": "v1", "retry_options": {"attempts": 1}}
+            http_options={
+                "api_version": "v1",
+                "retry_options": {"attempts": 1},
+                "timeout": int(self.timeout_seconds * 1000),
+            }
         )
         interaction = client.interactions.create(
             model=self.model,
@@ -388,10 +437,14 @@ class GeminiFallbackProvider(Provider):
         provider_factory: Callable[[str], Provider] | None = None,
         deadline_seconds: float = DEFAULT_GEMINI_DEADLINE_SECONDS,
         clock_fn: Callable[[], float] = time.monotonic,
+        timeout_seconds: float = DEFAULT_PROVIDER_TIMEOUT_SECONDS,
+        max_retries: int = DEFAULT_PROVIDER_MAX_RETRIES,
     ):
         if not models:
             raise ValueError("GeminiFallbackProvider requires at least one model")
-        super().__init__(models[0], max_output_tokens)
+        super().__init__(
+            models[0], max_output_tokens, timeout_seconds=timeout_seconds, max_retries=max_retries
+        )
         self.models = list(models)
         self.thinking_level = thinking_level
         self.retry_delays = tuple(retry_delays)
@@ -400,7 +453,13 @@ class GeminiFallbackProvider(Provider):
         self.deadline_seconds = deadline_seconds
         self._clock = clock_fn
         factory = provider_factory or (
-            lambda m: GeminiProvider(m, max_output_tokens, thinking_level=thinking_level)
+            lambda m: GeminiProvider(
+                m,
+                max_output_tokens,
+                thinking_level=thinking_level,
+                timeout_seconds=timeout_seconds,
+                max_retries=max_retries,
+            )
         )
         self._providers = {m: factory(m) for m in self.models}
 

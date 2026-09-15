@@ -13,8 +13,19 @@
           <span class="stage-note">{{ ("status_running"|t)|capitalize }} · {{ row.running_elapsed }}</span>
         {% elif row.status == 'skipped' %}
           <span class="stage-note">{{ "stage_skipped"|t }}{{ (" — " + (row.skip_note_key|t)) if row.skip_note_key else "" }}</span>
-        {% elif row.status == 'succeeded' and row.fallback_used %}
-          {% if row.attempts_by_model %}
+        {% elif row.status == 'succeeded' and (row.fallback_used or row.model_attempts > 1) %}
+          {% if row.attempt_phases %}
+          <div class="stage-fallback-note">
+            {% for entry in row.attempt_phases %}
+              {% if not loop.first %}<div class="fallback-indicator">→</div>{% endif %}
+              <div class="fallback-attempt-group">
+                <strong>{{ ("attempt_phase_" ~ entry.phase)|t }}</strong> —
+                {{ ("attempt_outcome_" ~ entry.outcome)|t }} ·
+                {{ "cost_meta_label"|t }} ${{ "%.4f"|format(entry.estimated_cost_usd) }}
+              </div>
+            {% endfor %}
+          </div>
+          {% elif row.attempts_by_model %}
           <div class="stage-fallback-note">
             {% for g in row.attempts_by_model %}
               {% if not loop.first %}<div class="fallback-indicator">{{ "fallback_indicator"|t }}</div>{% endif %}
@@ -34,7 +45,18 @@
           {% endif %}
         {% elif row.status == 'failed' %}
           <span class="stage-error">{{ row.error }}</span>
-          {% if row.attempts_by_model %}
+          {% if row.attempt_phases %}
+            <div class="stage-fallback-note">
+              {% for entry in row.attempt_phases %}
+                {% if not loop.first %}<div class="fallback-indicator">→</div>{% endif %}
+                <div class="fallback-attempt-group">
+                  <strong>{{ ("attempt_phase_" ~ entry.phase)|t }}</strong> —
+                  {{ ("attempt_outcome_" ~ entry.outcome)|t }} ·
+                  {{ "cost_meta_label"|t }} ${{ "%.4f"|format(entry.estimated_cost_usd) }}
+                </div>
+              {% endfor %}
+            </div>
+          {% elif row.attempts_by_model %}
             <div class="stage-fallback-note">
               {% for g in row.attempts_by_model %}
                 {% if not loop.first %}<div class="fallback-indicator">{{ "fallback_indicator"|t }}</div>{% endif %}

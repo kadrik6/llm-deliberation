@@ -275,7 +275,12 @@ def group_attempts_by_model(attempt_log: list[dict] | None) -> list[dict]:
     e.g. "Gemini 3.8 Flash: 4 attempts, failed: provider overload" followed
     by "Gemini 3.7 Flash: 3 attempts, succeeded".
     """
-    if not attempt_log:
+    if not attempt_log or attempt_log_phases(attempt_log) is not None:
+        # Phase-based logs (orchestrator.run_stage's truncation recovery --
+        # see attempt_log_phases) are rendered by a dedicated template block
+        # instead: grouping them by model would collapse "initial" and
+        # "recovery" into one misleading group, since both phases use the
+        # exact same model.
         return []
     groups: list[dict] = []
     index: dict[str, int] = {}
@@ -289,6 +294,24 @@ def group_attempts_by_model(attempt_log: list[dict] | None) -> list[dict]:
         group["outcome"] = entry.get("outcome")
         group["reason"] = entry.get("reason")
     return groups
+
+
+def attempt_log_phases(attempt_log: list[dict] | None) -> list[dict] | None:
+    """The phase-based view of an attempt_log, if it is one -- else None.
+
+    Distinguishes orchestrator.run_stage's OpenAI/Anthropic truncation-
+    recovery log (entries shaped {"phase": "initial"|"recovery", "model",
+    "outcome", "estimated_cost_usd"}, at most 2 entries, always the same
+    model in both) from GeminiFallbackProvider's per-model retry/fallback
+    log (entries shaped {"model", "attempt_number", "outcome", "reason",
+    ...}, no "phase" key). Used to answer, in the UI, "was this stage
+    retried once concisely after truncating, and what happened each time" --
+    see the reliability-pass follow-up: two real paid attempts must never be
+    collapsed into a single misleading "Attempts (this try): 1".
+    """
+    if not attempt_log or "phase" not in attempt_log[0]:
+        return None
+    return attempt_log
 
 
 def build_pipeline(record: RunRecord) -> list[dict]:
@@ -334,6 +357,7 @@ def build_pipeline(record: RunRecord) -> list[dict]:
                     "attempt_log": stage.attempt_log,
                     "failure_reason": stage.failure_reason,
                     "attempts_by_model": group_attempts_by_model(stage.attempt_log),
+                    "attempt_phases": attempt_log_phases(stage.attempt_log),
                     "running_elapsed": running_elapsed,
                     # A skippable, failed stage gets a "Retry" + "Skip"
                     # pair instead of the single generic retry button.

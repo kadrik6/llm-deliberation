@@ -83,9 +83,21 @@
         {{ artifact.usage.input_tokens }} in / {{ artifact.usage.output_tokens }} out &middot;
         ${{ "%.4f"|format(artifact.estimated_cost_usd) }}
       </p>
-      {% if artifact.fallback_used %}
+      {% if artifact.fallback_used or artifact.model_attempts > 1 %}
+      {% set attempt_phases = artifact.attempt_log|attempt_log_phases %}
       {% set attempt_groups = artifact.attempt_log|group_attempts_by_model %}
-      {% if attempt_groups %}
+      {% if attempt_phases %}
+      <div class="artifact-fallback-note">
+        {% for entry in attempt_phases %}
+          {% if not loop.first %}<div class="fallback-indicator">→</div>{% endif %}
+          <div class="fallback-attempt-group">
+            <strong>{{ ("attempt_phase_" ~ entry.phase)|t }}</strong> —
+            {{ ("attempt_outcome_" ~ entry.outcome)|t }} &middot;
+            {{ "cost_meta_label"|t }} ${{ "%.4f"|format(entry.estimated_cost_usd) }}
+          </div>
+        {% endfor %}
+      </div>
+      {% elif attempt_groups %}
       <div class="artifact-fallback-note">
         {% for g in attempt_groups %}
           {% if not loop.first %}<div class="fallback-indicator">{{ "fallback_indicator"|t }}</div>{% endif %}

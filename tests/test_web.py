@@ -1745,3 +1745,82 @@ def test_context_persistence_unaffected_by_question_length_guidance_over_http(
     response = _submit(client, question="Short focused question?", context=long_context)
     run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
     assert service.get_run(run_id).context == long_context
+
+
+# -- follow-up reliability investigation: recovery provenance in the UI ----
+# (Section 7, items 11, 12, 15)
+
+_RECOVERY_ATTEMPT_LOG = [
+    {"phase": "initial", "model": "claude-opus-5", "outcome": "output_truncated", "estimated_cost_usd": 0.04},
+    {"phase": "recovery", "model": "claude-opus-5", "outcome": "succeeded", "estimated_cost_usd": 0.02},
+]
+
+
+def test_successful_recovery_shows_two_attempts_not_one(client, service, fake_orchestrator_state):
+    fake_orchestrator_state["responses"] = {
+        "analysis_b": {
+            "provider": "Anthropic",
+            "model": "claude-opus-5",
+            "requested_model": "claude-opus-5",
+            "model_attempts": 2,
+            "attempt_log": _RECOVERY_ATTEMPT_LOG,
+            "estimated_cost_usd": 0.06,
+        }
+    }
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    body = client.get(f"/runs/{run_id}").text
+    assert "Initial generation" in body
+    assert "Concise recovery" in body
+    assert "output truncated at max tokens" in body
+    # The old flat "Attempts (this try): 1" line must not appear for this
+    # stage -- that was the exact misleading display this investigation
+    # was triggered by.
+    assert "Attempts (this try): 1" not in body
+
+
+def test_failed_recovery_shows_both_attempts_and_their_costs(
+    client, service, fake_orchestrator_state
+):
+    failed_log = [
+        {"phase": "initial", "model": "claude-opus-5", "outcome": "output_truncated", "estimated_cost_usd": 0.04},
+        {"phase": "recovery", "model": "claude-opus-5", "outcome": "output_truncated", "estimated_cost_usd": 0.03},
+    ]
+    fake_orchestrator_state["responses"] = {
+        "analysis_b": {
+            "incomplete_reason": "output_truncated",
+            "model_attempts": 2,
+            "attempt_log": failed_log,
+            "estimated_cost_usd": 0.07,
+        }
+    }
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    body = client.get(f"/runs/{run_id}").text
+    assert "Status: failed" in body
+    assert "Initial generation" in body
+    assert "Concise recovery" in body
+    assert "$0.0400" in body
+    assert "$0.0300" in body
+
+    record = service.get_run(run_id)
+    stage = next(s for s in record.stages if s.name == "analysis_b")
+    assert stage.model_attempts == 2
+    assert abs(stage.estimated_cost_usd - 0.07) < 1e-9
+
+
+def test_historical_stage_without_attempt_log_still_renders_normally(
+    client, service, fake_orchestrator_state
+):
+    # A stage record shaped like one persisted before this investigation's
+    # fix (model_attempts=1, attempt_log=None) must keep rendering exactly
+    # as before -- no phase block, no crash.
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    body = client.get(f"/runs/{run_id}").text
+    assert "Initial generation" not in body
+    assert "Concise recovery" not in body
+    assert response.status_code == 200
