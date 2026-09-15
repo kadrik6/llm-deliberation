@@ -5,6 +5,20 @@ from datetime import datetime, timezone
 from llm_deliberation.orchestrator import SKIPPABLE_STAGE_NAMES
 from llm_deliberation.store import RunRecord, StageRecord
 
+# A run in one of these statuses is done for good: nothing will ever change
+# it further without an explicit user action (retry/resume/skip). Used to
+# gate every live-update mechanism (SSE, no-JS meta-refresh) so a finished
+# run is rendered once and left alone -- retryability is not the same thing
+# as "currently running", and must not keep a page polling/reconnecting.
+# "pending" and "running" are the only non-terminal run statuses (see
+# service.py); "skipped" is a *stage*-level status, never a run-level one.
+TERMINAL_RUN_STATUSES: frozenset[str] = frozenset({"succeeded", "failed"})
+
+
+def is_terminal_run_status(status: str) -> bool:
+    return status in TERMINAL_RUN_STATUSES
+
+
 STATUS_SYMBOLS: dict[str, str] = {
     "pending": "○",  # ○
     "running": "●",  # ●

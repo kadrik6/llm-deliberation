@@ -42,6 +42,21 @@
   // Live pipeline updates via Server-Sent Events, while a run is in
   // progress. Falls back to nothing (the <noscript> meta-refresh in the
   // template covers no-JS clients; a manual page reload covers the rest).
+  //
+  // #pipeline-container is only ever rendered by the server for a
+  // non-terminal run (see run_detail.html / presenter.TERMINAL_RUN_STATUSES)
+  // -- an already-succeeded or already-failed run uses a different element
+  // id specifically so this code never matches it and never opens a
+  // connection for a run that is already done. That is the primary guard;
+  // the "done" handler below is a second, independent one: even if this
+  // ever ran against a run that finished while being watched live, only a
+  // "succeeded" transition needs a full reload (to switch from this
+  // pipeline view to the result-page layout). A "failed" transition does
+  // not: the "pipeline" event just above already replaced this container
+  // with the final failed-state markup (error, cost, retry/resume/skip
+  // controls), so reloading would do nothing but re-run this exact logic
+  // again -- which is precisely how a stuck failed run used to reload
+  // itself in an unbounded loop.
   var pipelineContainer = document.getElementById("pipeline-container");
   if (pipelineContainer && window.EventSource) {
     var runId = pipelineContainer.getAttribute("data-run-id");
@@ -51,9 +66,14 @@
       pipelineContainer.innerHTML = event.data;
     });
 
-    source.addEventListener("done", function () {
+    source.addEventListener("done", function (event) {
       source.close();
-      window.location.reload();
+      if (event.data === "succeeded") {
+        window.location.reload();
+      }
+      // Any other terminal status (currently just "failed"): stay put.
+      // The DOM is already up to date and the connection is closed --
+      // nothing left to do, and nothing left running.
     });
 
     source.onerror = function () {

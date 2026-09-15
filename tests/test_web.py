@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 
 def _submit(
@@ -1126,3 +1127,219 @@ def test_export_of_english_run_keeps_english_report_headings(
     assert export.status_code == 200
     assert "# LLM Deliberation Report" in export.text
     assert "## Final synthesis" in export.text
+
+
+# -- failed-run terminal-state / SSE reload-loop regression tests -----------
+#
+# Root cause: a failed run rendered the same live-update trigger
+# (#pipeline-container + EventSource) as an actively running one. The SSE
+# stream for an already-terminal run emits "pipeline" then "done" almost
+# instantly, and the client's "done" handler unconditionally called
+# window.location.reload() -- which re-opened the page, re-triggered the
+# same EventSource, got "done" again, reloaded again, forever. This only
+# affected failed runs because succeeded runs render result.html (no
+# #pipeline-container, no EventSource, at all).
+
+
+def test_is_terminal_run_status_classifies_correctly():
+    from llm_deliberation.web.presenter import is_terminal_run_status
+
+    assert is_terminal_run_status("succeeded") is True
+    assert is_terminal_run_status("failed") is True
+    assert is_terminal_run_status("pending") is False
+    assert is_terminal_run_status("running") is False
+    # A stage-level status, never a run-level one -- must not be treated
+    # as if it were a terminal run status by accident.
+    assert is_terminal_run_status("skipped") is False
+
+
+def test_opening_already_failed_run_returns_200(client, service, fake_orchestrator_state):
+    fake_orchestrator_state["fail"] = {"revision_a"}
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+    assert service.get_run(run_id).status == "failed"
+
+    detail = client.get(f"/runs/{run_id}")
+    assert detail.status_code == 200
+
+
+def test_failed_run_renders_completed_earlier_stages(client, service, fake_orchestrator_state):
+    fake_orchestrator_state["fail"] = {"revision_a"}
+    response = _submit(client, question="Q?", red_team=True)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    # The pipeline view (used for both in-progress and failed runs, before
+    # and after this fix) shows each stage's status/label, not its full
+    # generated text -- that only appears once a run succeeds (result.html).
+    # A completed earlier stage must show as succeeded here.
+    record = service.get_run(run_id)
+    by_name = {s.name: s for s in record.stages}
+    for name in ("analysis_a", "analysis_b", "critique_a_of_b", "critique_b_of_a"):
+        assert by_name[name].status == "succeeded"
+
+    detail = client.get(f"/runs/{run_id}")
+    body = detail.text
+    assert body.count("status-succeeded") >= 4
+    assert "OpenAI" in body and "Anthropic" in body
+
+
+def test_failed_stage_and_its_message_are_visible(client, service, fake_orchestrator_state):
+    fake_orchestrator_state["fail"] = {"revision_a"}
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    detail = client.get(f"/runs/{run_id}")
+    body = detail.text
+    # Jinja HTML-escapes the stored error text (the apostrophe becomes
+    # &#39;), so check the substring that survives escaping.
+    assert "simulated failure in stage" in body
+    assert "revision_a" in body
+    assert "Status: failed" in body
+
+
+def test_failed_run_missing_downstream_artifacts_does_not_crash_rendering(
+    client, service, fake_orchestrator_state
+):
+    # revision_a fails, so revision_b/convergence_analysis/synthesis never
+    # ran -- the page must render these as pending, not crash.
+    fake_orchestrator_state["fail"] = {"revision_a"}
+    response = _submit(client, question="Q?", red_team=True)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    record = service.get_run(run_id)
+    by_name = {s.name: s for s in record.stages}
+    assert by_name["convergence_analysis"].status == "pending"
+    assert by_name["synthesis"].status == "pending"
+
+    detail = client.get(f"/runs/{run_id}")
+    assert detail.status_code == 200  # no crash despite missing artifacts
+
+
+def test_failed_run_does_not_render_live_update_trigger(client, service, fake_orchestrator_state):
+    fake_orchestrator_state["fail"] = {"revision_a"}
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    detail = client.get(f"/runs/{run_id}")
+    body = detail.text
+    # No element app.js's EventSource-opening code can find.
+    assert 'id="pipeline-container"' not in body
+    assert "data-run-id=" not in body
+    # No no-JS polling fallback either.
+    assert 'http-equiv="refresh"' not in body
+    # The pipeline content itself is still rendered, just not wrapped in a
+    # live-triggering container.
+    assert 'id="pipeline-result"' in body
+    assert "Status: failed" in body
+
+
+def test_running_run_still_renders_live_update_trigger(client, service):
+    """Point 12 / control case: a genuinely non-terminal run must keep its
+    existing live-update behavior -- this fix must not disable it."""
+    run_id = service.create_run("Q?", "economy", red_team_enabled=False)
+    stage = service.repo.get_stage(run_id, "analysis_a")
+    service.repo.mark_stage_running(stage.id)
+    service.repo.update_run(run_id, status="running", set_started_if_unset=True)
+
+    detail = client.get(f"/runs/{run_id}")
+    body = detail.text
+    assert 'id="pipeline-container"' in body
+    assert f'data-run-id="{run_id}"' in body
+    assert 'http-equiv="refresh"' in body
+
+
+def test_sse_stream_for_already_failed_run_terminates_after_one_done_event(
+    client, service, fake_orchestrator_state
+):
+    """Server-side half of the fix: even if a connection were opened
+    against an already-terminal run, the stream must send exactly one
+    "pipeline" event, one "done" event carrying the terminal status, and
+    then end -- never loop, never send a second "pipeline" after "done"."""
+    fake_orchestrator_state["fail"] = {"revision_a"}
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+    assert service.get_run(run_id).status == "failed"
+
+    with client.stream("GET", f"/runs/{run_id}/events") as r:
+        raw = "".join(r.iter_lines())
+    assert raw.count("event: pipeline") == 1
+    assert raw.count("event: done") == 1
+    assert raw.index("event: pipeline") < raw.index("event: done")
+    # The "done" payload is the terminal status, not the run id -- the
+    # client uses it to decide whether a reload is actually warranted.
+    assert "data: failed" in raw
+
+
+def test_sse_done_payload_is_succeeded_for_a_successful_run(
+    client, service, fake_orchestrator_state
+):
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+    assert service.get_run(run_id).status == "succeeded"
+
+    with client.stream("GET", f"/runs/{run_id}/events") as r:
+        raw = "".join(r.iter_lines())
+    assert "data: succeeded" in raw
+
+
+def test_app_js_only_reloads_on_succeeded_done_and_closes_on_error():
+    """No JS test runner exists in this project (deliberately not adding
+    one for a bug fix) -- this asserts the actual shipped source contains
+    the specific guard that prevents the reload loop, so a future edit
+    that removes the guard breaks a test instead of silently reintroducing
+    the bug."""
+    app_js = (
+        Path(__file__).resolve().parents[1]
+        / "src" / "llm_deliberation" / "web" / "static" / "app.js"
+    ).read_text()
+
+    done_handler = app_js.split('addEventListener("done"', 1)[1].split("});", 1)[0]
+    assert 'event.data === "succeeded"' in done_handler
+    assert "window.location.reload()" in done_handler
+
+    # onerror must close the connection -- EventSource auto-reconnects by
+    # default, which would otherwise keep hammering a dead/terminal stream.
+    onerror_handler = app_js.split("source.onerror", 1)[1]
+    assert "source.close()" in onerror_handler.split("};", 1)[0]
+
+
+def test_manual_retry_moves_a_failed_run_back_to_an_active_state(
+    client, service, fake_orchestrator_state
+):
+    fake_orchestrator_state["fail"] = {"revision_a"}
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+    assert service.get_run(run_id).status == "failed"
+
+    fake_orchestrator_state["fail"] = set()
+    retry_response = client.post(f"/runs/{run_id}/stages/revision_a/retry")
+    assert retry_response.status_code == 200
+    assert service.get_run(run_id).status == "succeeded"
+
+
+def test_viewing_a_failed_run_does_not_change_accumulated_cost(
+    client, service, fake_orchestrator_state
+):
+    fake_orchestrator_state["fail"] = {"revision_a"}
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+    cost_before = service.get_run(run_id).estimated_total_cost_usd
+
+    for _ in range(3):
+        assert client.get(f"/runs/{run_id}").status_code == 200
+
+    assert service.get_run(run_id).estimated_total_cost_usd == cost_before
+
+
+def test_successful_run_live_behavior_and_rendering_are_unchanged(client, service):
+    """Control case: a succeeded run must keep behaving exactly as before
+    this fix -- result.html, no pipeline-container, no live trigger, ever."""
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+    assert service.get_run(run_id).status == "succeeded"
+
+    detail = client.get(f"/runs/{run_id}")
+    body = detail.text
+    assert "Final answer" in body
+    assert 'id="pipeline-container"' not in body
+    assert 'id="pipeline-result"' not in body  # that id is failed-run-only

@@ -19,10 +19,20 @@
 
 {% if record.status == "succeeded" %}
   {% include "partials/result.html" %}
-{% else %}
+{% elif live_updates %}
   <div id="pipeline-container" data-run-id="{{ record.id }}" data-status="{{ record.status }}">
     {% include "partials/pipeline.html" %}
   </div>
   <noscript><meta http-equiv="refresh" content="3"></noscript>
+{% else %}
+  <!-- Terminal (failed) run: render once, no live connection, no
+       no-JS meta-refresh -- see presenter.TERMINAL_RUN_STATUSES. A
+       different element id than the live case is deliberate: app.js
+       looks up "pipeline-container" specifically, so a terminal run
+       never matches it and never opens an EventSource at all, not even
+       briefly. -->
+  <div id="pipeline-result">
+    {% include "partials/pipeline.html" %}
+  </div>
 {% endif %}
 {% endblock %}

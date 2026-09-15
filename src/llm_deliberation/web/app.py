@@ -32,6 +32,7 @@ from llm_deliberation.web.presenter import (
     elapsed_seconds,
     format_datetime,
     format_duration,
+    is_terminal_run_status,
 )
 
 WEB_DIR = Path(__file__).parent
@@ -261,6 +262,11 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
             "cost": f"${record.estimated_total_cost_usd:.4f}",
             "elapsed": format_duration(elapsed_seconds(record)),
             "language_native_name": NATIVE_LANGUAGE_NAMES.get(record.language, record.language),
+            # A terminal run (succeeded/failed) is rendered once and never
+            # opens a live connection -- retryability (a failed run can
+            # still be retried/resumed/skipped) is not "currently running".
+            # See presenter.TERMINAL_RUN_STATUSES.
+            "live_updates": not is_terminal_run_status(record.status),
         }
 
         if record.status == "succeeded":
@@ -318,8 +324,14 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
                     return
                 yield _sse("pipeline", render_pipeline_fragment(record, ui_lang))
                 still_running = run_id in request.app.state.running
-                if record.status in ("succeeded", "failed") and not still_running:
-                    yield _sse("done", run_id)
+                if is_terminal_run_status(record.status) and not still_running:
+                    # Payload is the terminal status itself, not run_id --
+                    # the client uses it to decide whether a full reload is
+                    # actually needed (only "succeeded" switches the page
+                    # from the pipeline view to the result-page layout; a
+                    # "failed" run's pipeline fragment above already shows
+                    # the final state, so no reload -- see app.js).
+                    yield _sse("done", record.status)
                     return
                 await asyncio.sleep(1.0)
 
