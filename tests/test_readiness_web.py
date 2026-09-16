@@ -65,22 +65,212 @@ def _patch_readiness(monkeypatch, *, openai_ready=True, anthropic_ready=True, ge
     monkeypatch.setattr(service_module.readiness, "check_run_readiness", fake)
 
 
-# -- 30/31: readiness strings render in EN/ET --------------------------------
+# -- 1: large readiness card no longer renders by default --------------------
+
+
+def test_1_large_readiness_card_not_rendered_by_default(client):
+    body = client.get("/").text
+    assert "readiness-panel" not in body
+    assert "readiness-list" not in body
+    assert "readiness-details" not in body
+    assert "Provider readiness" not in body  # the full-card heading
+
+
+def test_1_large_readiness_card_not_rendered_after_successful_check(client, monkeypatch):
+    _patch_readiness(monkeypatch)
+    body = client.post(
+        "/providers/check",
+        data={"profile": "economy", "language": "en", "question": "", "context": ""},
+    ).text
+    # A successful check stays compact -- no per-provider list/expanded card.
+    assert "readiness-list" not in body
+    assert "readiness-details" not in body
+
+
+# -- 2: Start triggers readiness automatically when cache is absent/stale ----
+
+
+def test_2_start_triggers_readiness_automatically_with_no_prior_check(
+    client, service, monkeypatch
+):
+    """A plain Start click (no prior "Check now") must still run the
+    readiness preflight -- proven here by a required-provider failure
+    blocking run creation even though the visitor never manually checked.
+    """
+    _patch_readiness(monkeypatch, openai_ready=False)
+    before = len(service.list_runs())
+
+    response = _submit(client)
+    assert response.status_code == 400
+    assert len(service.list_runs()) == before
+
+
+def test_2_start_triggers_readiness_automatically_calls_check_run_readiness(
+    client, monkeypatch
+):
+    calls = {"count": 0}
+    import llm_deliberation.service as service_module
+    from llm_deliberation.readiness import ProviderReadiness, ReadinessReport, _now_iso
+
+    def fake(settings, *, red_team_enabled, force=False):
+        calls["count"] += 1
+        ready = ProviderReadiness(
+            provider="x", configured_model="m", status="ready", checked_at=_now_iso(),
+            check_type="model_retrieve", paid_probe=False, estimated_probe_cost_usd=0.0,
+            user_message="ok",
+        )
+        return ReadinessReport(openai=ready, anthropic=ready, gemini=None)
+
+    monkeypatch.setattr(service_module.readiness, "check_run_readiness", fake)
+    _submit(client)
+    assert calls["count"] == 1
+
+
+# -- 3: fresh cached readiness avoids duplicate (SDK-level) checks -----------
+
+
+def test_3_fresh_cached_readiness_avoids_duplicate_provider_calls(tmp_path, monkeypatch):
+    """Exercises the REAL readiness cache (not the always-ready stub the
+    `service`/`client` fixtures install), to prove "Check now" followed by
+    Start reuses the cached result instead of re-probing the provider SDKs.
+    A fresh DeliberationService/app are built here specifically to avoid
+    conftest.py's service_module.readiness stub.
+    """
+    from types import SimpleNamespace
+
+    import openai
+    import anthropic
+    from fastapi.testclient import TestClient
+
+    from llm_deliberation import readiness as readiness_module
+    from llm_deliberation.service import DeliberationService
+    from llm_deliberation.web.app import create_app
+
+    readiness_module.invalidate_readiness_cache()
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
+
+    calls = {"openai": 0, "anthropic": 0}
+
+    def _openai_retrieve(self, model, **kw):
+        calls["openai"] += 1
+        return SimpleNamespace(id=model)
+
+    def _anthropic_retrieve(self, model_id, **kw):
+        calls["anthropic"] += 1
+        return SimpleNamespace(id=model_id)
+
+    monkeypatch.setattr(openai.resources.models.Models, "retrieve", _openai_retrieve)
+    monkeypatch.setattr(anthropic.resources.models.Models, "retrieve", _anthropic_retrieve)
+
+    svc = DeliberationService(tmp_path / "deliberation.db")
+    app = create_app(service=svc)
+    with TestClient(app, follow_redirects=True) as test_client:
+        # "Check now" -- a forced recheck, one real probe per provider.
+        test_client.post(
+            "/providers/check",
+            data={"profile": "economy", "language": "en", "question": "", "context": ""},
+        )
+        assert calls == {"openai": 1, "anthropic": 1}
+
+        # Start, immediately after -- must reuse the still-fresh cache
+        # rather than probing again.
+        test_client.post(
+            "/runs", data={"question": "Q?", "profile": "economy", "language": "en"}
+        )
+        assert calls == {"openai": 1, "anthropic": 1}
+
+    readiness_module.invalidate_readiness_cache()
+
+
+# -- 4: successful readiness proceeds directly, no extra confirmation --------
+
+
+def test_4_successful_readiness_proceeds_directly_to_run(client, service):
+    response = _submit(client, question="Ship on Friday?")
+    assert response.status_code == 200  # followed redirect straight to run detail
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+    record = service.get_run(run_id)
+    assert record.status == "succeeded"  # FakeOrchestrator resolves instantly
+    # No leftover readiness card/notice on the resulting run page.
+    assert "readiness-details" not in response.text
+
+
+# -- 7: compact manual "Check now" control -----------------------------------
+
+
+def test_7_check_now_control_present_with_correct_form_wiring(client):
+    body = client.get("/").text
+    assert 'formaction="/providers/check"' in body
+    assert "Check now" in body
+
+
+def test_7_check_now_control_triggers_a_real_readiness_check(client, monkeypatch):
+    calls = {"count": 0}
+    import llm_deliberation.service as service_module
+    from llm_deliberation.readiness import ProviderReadiness, ReadinessReport, _now_iso
+
+    def fake(settings, *, red_team_enabled, force=False):
+        calls["count"] += 1
+        assert force is True  # a manual click always forces a recheck
+        ready = ProviderReadiness(
+            provider="x", configured_model="m", status="ready", checked_at=_now_iso(),
+            check_type="model_retrieve", paid_probe=False, estimated_probe_cost_usd=0.0,
+            user_message="ok",
+        )
+        return ReadinessReport(openai=ready, anthropic=ready, gemini=None)
+
+    monkeypatch.setattr(service_module.readiness, "check_run_readiness", fake)
+    response = client.post(
+        "/providers/check",
+        data={"profile": "economy", "language": "en", "question": "", "context": ""},
+    )
+    assert response.status_code == 200
+    assert calls["count"] == 1
+    assert "Providers ready" in response.text
+
+
+# -- 30/31/8: compact readiness strings render in EN/ET -----------------------
 
 
 def test_readiness_strings_render_en(client):
     body = client.get("/").text
-    assert "Provider readiness" in body
-    assert "Not checked" in body
-    assert "Check providers" in body
+    assert "Provider check: automatic" in body
+    assert "Check now" in body
+    # The full "Provider readiness" heading/per-provider list is reserved
+    # for an actual failure -- see test_1_large_readiness_card_not_rendered_by_default.
+    assert "Provider readiness" not in body
 
 
 def test_readiness_strings_render_et(client):
-    body = client.get("/ui-language/et", follow_redirects=True).text
+    client.get("/ui-language/et", follow_redirects=True)
     body = client.get("/").text
-    assert "Teenusepakkujate valmisolek" in body
-    assert "Kontrollimata" in body
-    assert "Kontrolli teenusepakkujaid" in body
+    assert "Teenusepakkuja kontroll: automaatne" in body
+    assert "Kontrolli kohe" in body
+    assert "Teenusepakkujate valmisolek" not in body
+
+
+def test_readiness_ready_status_strings_render_en(client, monkeypatch):
+    _patch_readiness(monkeypatch)
+    body = client.post(
+        "/providers/check",
+        data={"profile": "economy", "language": "en", "question": "", "context": ""},
+    ).text
+    assert "Providers ready" in body
+    assert "checked" in body.lower()
+    assert "Check again" in body
+
+
+def test_readiness_ready_status_strings_render_et(client, monkeypatch):
+    client.get("/ui-language/et", follow_redirects=True)
+    _patch_readiness(monkeypatch)
+    body = client.post(
+        "/providers/check",
+        data={"profile": "economy", "language": "et", "question": "", "context": ""},
+    ).text
+    assert "Teenusepakkujad on valmis" in body
+    assert "kontrollitud" in body.lower()
+    assert "Kontrolli uuesti" in body
 
 
 # -- Check providers route ---------------------------------------------------
@@ -193,10 +383,23 @@ def test_gemini_not_checked_when_red_team_disabled_in_submitted_form(client, mon
 
 
 def test_provider_readiness_passed_does_not_claim_guaranteed_success(client):
+    # The compact success line itself is terse by design (no large panel --
+    # see the module docstring), so it must not contain overclaiming
+    # language rather than being required to repeat the full disclaimer.
     body = client.post(
         "/providers/check",
         data={"profile": "economy", "language": "en", "question": "", "context": ""},
     ).text
+    assert "will definitely work" not in body.lower()
+    assert "guaranteed" not in body.lower()
+
+
+def test_readiness_disclaimer_still_shown_when_expanded_on_failure(client, monkeypatch):
+    # The full "does not guarantee" disclaimer remains present once details
+    # are actually expanded (a real failure) -- it's just no longer shown
+    # unconditionally on every successful check.
+    _patch_readiness(monkeypatch, openai_ready=False)
+    body = _submit(client).text
     assert "does not guarantee" in body
 
 

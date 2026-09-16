@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Coroutine
 
@@ -103,8 +104,19 @@ def _cost_estimates(red_team_enabled: bool) -> dict[str, str]:
     return estimates
 
 
+def _minutes_since(iso_timestamp: str) -> int:
+    """Whole minutes elapsed since an ISO-8601 UTC timestamp -- used only
+    for the compact readiness status line's "checked N minutes ago" (see
+    index.html). Never negative (a clock skew or same-instant check clamps
+    to 0, rendered as "checked just now")."""
+    checked_at = datetime.fromisoformat(iso_timestamp)
+    now = datetime.now(timezone.utc)
+    return max(0, int((now - checked_at).total_seconds() // 60))
+
+
 def _profile_context(*, ui_lang: str, **overrides: object) -> dict:
     red_team_default = overrides.get("default_red_team", default_red_team_enabled())
+    readiness_value = overrides.get("readiness")
     base = {
         "ui_lang": ui_lang,
         "profiles": [(key, PROFILE_BLURB_KEYS[key]) for key in PROFILE_ORDER],
@@ -127,10 +139,19 @@ def _profile_context(*, ui_lang: str, **overrides: object) -> dict:
         "question_warn_threshold": QUESTION_LENGTH_WARNING_THRESHOLD,
         "cost_estimates": _cost_estimates(bool(red_team_default)),
         "max_run_cost_value": None,
-        # None = "Check providers" not yet pressed for this page view (see
-        # index.html); otherwise a readiness.ReadinessReport from a manual
-        # "Check providers" click or a blocked submit_run attempt.
+        # None = no readiness result to show yet for this page view (see
+        # index.html's compact status line); otherwise a
+        # readiness.ReadinessReport from the automatic check Start triggers,
+        # a manual "Check now" click, or a blocked submit_run attempt.
         "readiness": None,
+        # Whole minutes since the readiness result was actually checked --
+        # only meaningful when "readiness" is set. Computed once here
+        # (rather than in the template) so every render path (index,
+        # check_providers, submit_run's re-render) shows a consistent value
+        # without duplicating the same datetime arithmetic three times.
+        "readiness_minutes_ago": (
+            _minutes_since(readiness_value.openai.checked_at) if readiness_value else None
+        ),
         "gemini_unavailable_choice": False,
     }
     base.update(overrides)

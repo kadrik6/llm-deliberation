@@ -23,34 +23,56 @@
 </div>
 {% endif %}
 
-<section class="readiness-panel">
-  <h2>{{ "readiness_heading"|t }}</h2>
-  {% if readiness %}
-    <ul class="readiness-list">
-      <li class="readiness-{{ readiness.openai.status }}">
-        <strong>OpenAI</strong> &mdash; {{ ("readiness_status_" ~ readiness.openai.status)|t }}
-        {% if not readiness.openai.ready %}<span class="readiness-detail">{{ readiness.openai.user_message }}</span>{% endif %}
-      </li>
-      <li class="readiness-{{ readiness.anthropic.status }}">
-        <strong>Anthropic</strong> &mdash; {{ ("readiness_status_" ~ readiness.anthropic.status)|t }}
-        {% if not readiness.anthropic.ready %}<span class="readiness-detail">{{ readiness.anthropic.user_message }}</span>{% endif %}
-      </li>
-      {% if readiness.gemini %}
-      <li class="readiness-{{ readiness.gemini.status }}">
-        <strong>Gemini</strong> &mdash; {{ ("readiness_status_" ~ readiness.gemini.status)|t }}
-        {% if not readiness.gemini.ready %}<span class="readiness-detail">{{ readiness.gemini.user_message }}</span>{% endif %}
-      </li>
-      {% endif %}
-    </ul>
-    <p class="hint">{{ "readiness_checked_at_label"|t }}: {{ readiness.openai.checked_at|fmt_datetime }}</p>
-    <p class="hint">{{ "readiness_disclaimer"|t }}</p>
-  {% else %}
-    <p class="hint">{{ "readiness_not_checked"|t }}</p>
+<!-- Compact provider-readiness status: a small secondary control, not a
+     standalone card -- see docs/decisions/009-compact-readiness-ux.md.
+     Readiness itself still runs automatically when Start is pressed (using
+     a fresh cached result when one exists, see submit_run); this element
+     only ever shows full per-provider detail when there is an actual
+     failure to explain -- a success never expands beyond one line. -->
+<p class="readiness-status-line hint">
+  {% if not readiness %}
+    {{ "provider_check_automatic_label"|t }}
+    <button type="submit" form="new-run-form" formaction="/providers/check" formmethod="post" class="link-button">
+      {{ "check_now_button"|t }}
+    </button>
+  {% elif readiness.required_ready %}
+    {{ "providers_ready_label"|t }} &middot;
+    {% if readiness_minutes_ago == 0 %}
+      {{ "checked_just_now"|t }}
+    {% else %}
+      {{ "checked_prefix"|t }} {{ readiness_minutes_ago|count_label("minute_ago") }}
+    {% endif %}
+    <button type="submit" form="new-run-form" formaction="/providers/check" formmethod="post" class="link-button">
+      {{ "check_again_button"|t }}
+    </button>
   {% endif %}
+</p>
+
+{% if readiness and not readiness.required_ready %}
+<div class="notice notice-error readiness-details">
+  <h2>{{ "readiness_heading"|t }}</h2>
+  <ul class="readiness-list">
+    <li class="readiness-{{ readiness.openai.status }}">
+      <strong>OpenAI</strong> &mdash; {{ ("readiness_status_" ~ readiness.openai.status)|t }}
+      {% if not readiness.openai.ready %}<span class="readiness-detail">{{ readiness.openai.user_message }}</span>{% endif %}
+    </li>
+    <li class="readiness-{{ readiness.anthropic.status }}">
+      <strong>Anthropic</strong> &mdash; {{ ("readiness_status_" ~ readiness.anthropic.status)|t }}
+      {% if not readiness.anthropic.ready %}<span class="readiness-detail">{{ readiness.anthropic.user_message }}</span>{% endif %}
+    </li>
+    {% if readiness.gemini %}
+    <li class="readiness-{{ readiness.gemini.status }}">
+      <strong>Gemini</strong> &mdash; {{ ("readiness_status_" ~ readiness.gemini.status)|t }}
+      {% if not readiness.gemini.ready %}<span class="readiness-detail">{{ readiness.gemini.user_message }}</span>{% endif %}
+    </li>
+    {% endif %}
+  </ul>
+  <p class="hint">{{ "readiness_disclaimer"|t }}</p>
   <button type="submit" form="new-run-form" formaction="/providers/check" formmethod="post">
-    {{ ("check_again_button" if readiness else "check_providers_button")|t }}
+    {{ "check_again_button"|t }}
   </button>
-</section>
+</div>
+{% endif %}
 
 <form method="post" action="/runs" id="new-run-form">
   <label for="question">{{ "question_label"|t }}</label>

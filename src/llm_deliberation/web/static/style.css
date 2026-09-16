@@ -181,12 +181,24 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 .notice-error { background: var(--danger-bg); border-color: var(--danger); }
 .notice-warning { background: #fff7e6; }
 
-.readiness-panel {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0.85rem 1rem;
-  margin-bottom: 1.25rem;
+/* Compact provider-readiness status line -- deliberately just one small,
+   secondary row, not a standalone card. Full per-provider detail only ever
+   appears inside .readiness-details, reserved for an actual failure (see
+   index.html). */
+.readiness-status-line { margin: 0 0 1rem; }
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  margin-left: 0.3em;
+  color: var(--accent, #1a5fb4);
+  text-decoration: underline;
+  font-size: inherit;
+  cursor: pointer;
 }
+.link-button:hover { opacity: 0.8; }
+
+.readiness-details { margin-bottom: 1.25rem; }
 .readiness-list { list-style: none; padding: 0; margin: 0.5rem 0; }
 .readiness-list li { padding: 0.2rem 0; }
 .readiness-detail { color: var(--text-muted); font-size: 0.85rem; display: block; }

@@ -427,10 +427,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 
     # -- provider readiness (New Deliberation page) --------------------------
     "readiness_heading": {"en": "Provider readiness", "et": "Teenusepakkujate valmisolek"},
-    "readiness_not_checked": {"en": "Not checked", "et": "Kontrollimata"},
-    "check_providers_button": {"en": "Check providers", "et": "Kontrolli teenusepakkujaid"},
     "check_again_button": {"en": "Check again", "et": "Kontrolli uuesti"},
-    "readiness_checked_at_label": {"en": "Checked", "et": "Kontrollitud"},
     # Status badges -- never claim a guarantee about later calls (see
     # readiness.READY_DISCLAIMER, shown alongside "ready" results).
     "readiness_status_ready": {"en": "ready", "et": "valmis"},
@@ -454,6 +451,20 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "Deliberation cannot start: a required provider is not ready.",
         "et": "Arutelu ei saa alustada: nõutav teenusepakkuja pole valmis.",
     },
+    # -- compact readiness status line (replaces the old always-visible
+    # readiness card -- see docs/decisions/009-compact-readiness-ux.md).
+    # Shown when Start hasn't triggered a readiness check yet on this page
+    # view and no fresh cached result exists to display.
+    "provider_check_automatic_label": {
+        "en": "Provider check: automatic", "et": "Teenusepakkuja kontroll: automaatne",
+    },
+    "check_now_button": {"en": "Check now", "et": "Kontrolli kohe"},
+    # Shown once a readiness result exists and every required provider is
+    # ready -- deliberately compact, never the full per-provider list (that
+    # stays reserved for an actual failure/warning -- see index.html).
+    "providers_ready_label": {"en": "Providers ready", "et": "Teenusepakkujad on valmis"},
+    "checked_prefix": {"en": "checked", "et": "kontrollitud"},
+    "checked_just_now": {"en": "checked just now", "et": "kontrollitud just nüüd"},
     "gemini_unavailable_notice": {
         "en": "Gemini red-team is currently unavailable.",
         "et": "Punase meeskonna Gemini pole hetkel saadaval.",
@@ -560,6 +571,15 @@ _COUNT_NOUNS: dict[str, dict[str, tuple[str, str]]] = {
     "attempt": {
         "en": ("attempt", "attempts"),
         "et": ("katse", "katset"),
+    },
+    # Used by the compact readiness status line (e.g. "checked 4 minutes
+    # ago" / "kontrollitud 4 minutit tagasi") -- see index.html. Only
+    # reached for count >= 1; a 0-minute case uses the dedicated
+    # "checked_just_now" key instead (see _profile_context's
+    # readiness_minutes_ago).
+    "minute_ago": {
+        "en": ("minute ago", "minutes ago"),
+        "et": ("minut tagasi", "minutit tagasi"),
     },
 }
 
