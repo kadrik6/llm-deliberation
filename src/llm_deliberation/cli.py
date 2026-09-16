@@ -68,6 +68,13 @@ def _parser() -> argparse.ArgumentParser:
         help="List recent runs and exit.",
     )
     parser.add_argument(
+        "--diagnose-run",
+        metavar="RUN_ID",
+        help="Print a per-stage language/token/cost/finish-reason table for "
+             "an existing run and exit -- no API calls, developer diagnostic "
+             "only (see diagnostics.py).",
+    )
+    parser.add_argument(
         "--max-cost",
         metavar="USD",
         help="Application-side hard cost cap for this run (e.g. 0.75). "
@@ -141,6 +148,19 @@ async def _run(args: argparse.Namespace) -> int:
                 f"{run.id}  {run.status:<10} {run.profile:<10} "
                 f"${run.estimated_total_cost_usd:.4f}  {run.question[:60]}"
             )
+        return 0
+
+    if args.diagnose_run:
+        from llm_deliberation.diagnostics import format_efficiency_table, stage_efficiency_rows
+
+        try:
+            record = service.get_run(args.diagnose_run)
+        except KeyError:
+            print(f"Error: unknown run_id {args.diagnose_run!r}", file=sys.stderr)
+            return 2
+        print(f"Run {record.id} | output_language={record.language} | "
+              f"working_language={record.working_language or '(legacy: ' + record.language + ')'}")
+        print(format_efficiency_table(stage_efficiency_rows(record)))
         return 0
 
     if args.retry_stage:

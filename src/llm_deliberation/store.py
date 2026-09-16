@@ -76,6 +76,18 @@ class RunRecord:
     # migrated to NULL/None -- see _RUN_MIGRATION_COLUMNS -- which is the
     # correct, backward-compatible "no cap" default, not an invented one.
     max_run_cost_usd: str | None = None
+    # Language verbose intermediate stages (orchestrator.WORKING_LANGUAGE_STAGES)
+    # actually used for this run -- "en" | "et" | None. Distinct from
+    # `language` (the OUTPUT language, unchanged): this field only ever
+    # affects analysis_a/b, critique_*, red_team, revision_a/b; convergence_
+    # analysis and synthesis always use `language` regardless (see
+    # orchestrator.resolve_stage_language). None means "legacy run, this
+    # feature did not exist yet" -- NOT "English was used": a legacy run's
+    # effective working language is its own `language` (see
+    # service._execute), never assumed to be "en". Set once at creation,
+    # like `language`; never changed afterward, never rewritten for
+    # historical runs.
+    working_language: str | None = None
     stages: list[StageRecord] = field(default_factory=list)
 
 
@@ -149,6 +161,9 @@ _RUN_MIGRATION_COLUMNS: dict[str, str] = {
     "language": "TEXT NOT NULL DEFAULT 'en'",
     # Nullable, no default value beyond SQL NULL -- see RunRecord.max_run_cost_usd.
     "max_run_cost_usd": "TEXT",
+    # Nullable, no default -- see RunRecord.working_language. NULL (not "en")
+    # for every pre-existing row, since this feature did not exist for them.
+    "working_language": "TEXT",
 }
 
 
@@ -197,12 +212,14 @@ class Repository:
         red_team_enabled: bool,
         language: str = "en",
         max_run_cost_usd: str | None = None,
+        working_language: str | None = None,
     ) -> None:
         self._conn.execute(
             "INSERT INTO runs "
             "(id, question, context, profile, red_team_enabled, status, "
-            "created_at, estimated_total_cost_usd, language, max_run_cost_usd) "
-            "VALUES (?, ?, ?, ?, ?, 'pending', ?, 0.0, ?, ?)",
+            "created_at, estimated_total_cost_usd, language, max_run_cost_usd, "
+            "working_language) "
+            "VALUES (?, ?, ?, ?, ?, 'pending', ?, 0.0, ?, ?, ?)",
             (
                 run_id,
                 question,
@@ -212,6 +229,7 @@ class Repository:
                 utc_now_iso(),
                 language,
                 max_run_cost_usd,
+                working_language,
             ),
         )
         self._conn.commit()
@@ -304,6 +322,7 @@ class Repository:
             estimated_total_cost_usd=row["estimated_total_cost_usd"],
             language=row["language"],
             max_run_cost_usd=row["max_run_cost_usd"],
+            working_language=row["working_language"],
         )
 
     # -- stages ------------------------------------------------------

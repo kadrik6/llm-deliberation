@@ -197,6 +197,9 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 .budget input[type="number"] { width: 10rem; }
 .budget-update-form { margin-top: 0.5rem; display: flex; gap: 0.5rem; align-items: center; }
 
+.artifact-language-tag { color: var(--text-muted); font-size: 0.8rem; font-weight: normal; }
+.working-language-note { margin-top: 0.5rem; }
+
 .run-meta { margin-bottom: 1.5rem; }
 .question-text, .context-text { white-space: pre-wrap; }
 

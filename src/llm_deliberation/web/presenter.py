@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from llm_deliberation.orchestrator import SKIPPABLE_STAGE_NAMES
+from llm_deliberation.orchestrator import SKIPPABLE_STAGE_NAMES, resolve_stage_language
 from llm_deliberation.store import RunRecord, StageRecord
 
 # A run in one of these statuses is done for good: nothing will ever change
@@ -211,6 +211,26 @@ def compute_deliberation_quality(record: RunRecord) -> dict | None:
         return {"level": "degraded", "reasons": degraded}
 
     return {"level": "complete", "reasons": []}
+
+
+def artifact_language_tags(record: RunRecord) -> dict[str, str]:
+    """Which language each stage's stored artifact was actually generated
+    in ("en"/"et"), for the Full deliberation trace's per-artifact tag (see
+    partials/result.html) -- pure, derived-only from already-persisted data
+    via the same resolve_stage_language policy the real orchestrator used,
+    never re-inferred from the artifact text itself. For a legacy run
+    (working_language is None), every stage resolves to record.language,
+    matching that run's real, undifferentiated behavior.
+    """
+    effective_working_language = record.working_language or record.language
+    return {
+        stage.name: resolve_stage_language(
+            stage.name,
+            output_language=record.language,
+            working_language=effective_working_language,
+        )
+        for stage in record.stages
+    }
 
 
 PROFILE_ORDER: tuple[str, ...] = ("economy", "balanced", "max")

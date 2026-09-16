@@ -19,6 +19,7 @@ from llm_deliberation.orchestrator import (
     SKIPPABLE_STAGE_NAMES,
     WAVES,
     DeliberationOrchestrator,
+    default_working_language,
 )
 from llm_deliberation.prompts import SUPPORTED_LANGUAGES
 from llm_deliberation.providers import ProviderGenerationError
@@ -107,6 +108,13 @@ class DeliberationService:
 
         enabled = default_red_team_enabled() if red_team_enabled is None else red_team_enabled
 
+        # The concrete resolved value is persisted, never an "auto" sentinel
+        # -- see docs/decisions/008-working-language.md for why: a stored
+        # concrete value is truthful forever, even if the default policy
+        # (default_working_language) changes later, while a sentinel would
+        # need re-resolving at every future read and could silently drift.
+        working_language = default_working_language(language)
+
         run_id = uuid.uuid4().hex[:12]
         self.repo.insert_run(
             run_id,
@@ -116,6 +124,7 @@ class DeliberationService:
             red_team_enabled=enabled,
             language=language,
             max_run_cost_usd=str(budget) if budget is not None else None,
+            working_language=working_language,
         )
         for name in ALL_STAGE_NAMES:
             if name == "red_team" and not enabled:
@@ -288,6 +297,14 @@ class DeliberationService:
         if run.context:
             effective_question = f"{run.question}\n\nADDITIONAL CONTEXT:\n{run.context}"
 
+        # A legacy run (working_language column added after it was created)
+        # falls back to its own output language -- NOT "en" -- so every
+        # stage resolves to run.language exactly as it always did (see
+        # orchestrator.resolve_stage_language's docstring). Only a run
+        # created after this feature shipped has an explicit, possibly
+        # different, working_language.
+        effective_working_language = run.working_language or run.language
+
         stages_by_name = {s.name: s for s in self.repo.list_stages(run_id)}
         texts: dict[str, str] = {}
         run_failed = False
@@ -344,7 +361,8 @@ class DeliberationService:
             for name in pending_names:
                 stage = stages_by_name[name]
                 upper_bound = orchestrator.stage_upper_bound_cost(
-                    name, effective_question, texts, language=run.language
+                    name, effective_question, texts,
+                    output_language=run.language, working_language=effective_working_language,
                 )
                 try:
                     budget_guard.check(reserved + upper_bound)
@@ -364,7 +382,9 @@ class DeliberationService:
                 *(
                     orchestrator.run_stage(
                         name, effective_question, texts,
-                        gemini_mode=gemini_mode, language=run.language,
+                        gemini_mode=gemini_mode,
+                        output_language=run.language,
+                        working_language=effective_working_language,
                         budget_guard=budget_guard,
                     )
                     for name in admitted_names

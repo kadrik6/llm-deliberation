@@ -494,6 +494,27 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "increase_budget_label": {"en": "New max run cost (USD)", "et": "Uus maksimaalne kulu (USD)"},
     "increase_budget_button": {"en": "Update budget", "et": "Uuenda eelarvet"},
 
+    # -- working language note (run metadata / full trace) -------------------
+    # Shown only when a run's stored working_language actually differs from
+    # its output language (currently: an Estonian-output run, which
+    # defaults to an English working language -- see
+    # orchestrator.default_working_language). Never shown for a legacy run
+    # (working_language is None) or an English-output run (the two are
+    # always equal there), so this note only ever appears when the split
+    # genuinely happened. Deliberately does NOT say the original question
+    # was "translated" -- see the product principle in
+    # docs/decisions/008-working-language.md: Estonian stays fully
+    # supported, English is only an internal working choice.
+    "working_language_note_heading": {
+        "en": "Working language: English", "et": "Töökeel: inglise",
+    },
+    "working_language_note_body": {
+        "en": "Intermediate analysis uses English for efficiency and "
+              "reliability. The final result remains in Estonian.",
+        "et": "Vaheanalüüs tehakse töökindluse ja tokenikulu vähendamiseks "
+              "inglise keeles. Lõpptulemus jääb eesti keelde.",
+    },
+
     # -- privacy disclosure (near Start Deliberation) ------------------------
     "privacy_disclosure": {
         "en": "Your question and context are sent to the selected AI providers "

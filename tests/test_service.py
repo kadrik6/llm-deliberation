@@ -654,11 +654,15 @@ def test_original_question_is_not_translated_or_rewritten(service, fake_orchestr
     assert result.question == original_question
 
 
-@pytest.mark.parametrize("language", ["en", "et"])
-def test_output_language_reaches_every_user_facing_stage(
-    service, fake_orchestrator_state, language
+def test_output_language_reaches_every_user_facing_stage_for_english_runs(
+    service, fake_orchestrator_state
 ):
-    run_id = service.create_run("Q?", "economy", red_team_enabled=True, language=language)
+    # For an English run, working language == output language == "en" for
+    # every stage -- no split behavior at all (see
+    # test_working_language.py for the Estonian-specific split coverage,
+    # which replaced this test's old "every stage gets the run language,
+    # unconditionally" assumption -- see the working-language feature).
+    run_id = service.create_run("Q?", "economy", red_team_enabled=True, language="en")
     record = asyncio.run(service.start_run(run_id))
     assert record.status == "succeeded"
 
@@ -674,7 +678,7 @@ def test_output_language_reaches_every_user_facing_stage(
         "convergence_analysis",
         "synthesis",
     ):
-        assert languages_used[stage] == language
+        assert languages_used[stage] == "en"
 
 
 def test_no_additional_deliberation_stage_was_introduced_for_bilingual_support(

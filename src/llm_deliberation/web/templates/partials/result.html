@@ -72,7 +72,13 @@
     {% set artifact = artifacts.get(name) %}
     {% if artifact %}
     <details>
-      <summary>{{ title_key|t }}</summary>
+      <summary>
+        {{ title_key|t }}
+        {% set artifact_lang = artifact_languages.get(name) %}
+        {% if artifact_lang and artifact_lang != record.language %}
+        <code class="artifact-language-tag">({{ artifact_lang|upper }})</code>
+        {% endif %}
+      </summary>
       {% if name == "convergence_analysis" %}
         <pre class="raw-json">{{ artifact.text }}</pre>
       {% else %}

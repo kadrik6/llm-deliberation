@@ -52,11 +52,70 @@ def output_language_instruction(language: str) -> str:
     return _OUTPUT_LANGUAGE_INSTRUCTIONS.get(language, _OUTPUT_LANGUAGE_INSTRUCTIONS[DEFAULT_LANGUAGE])
 
 
-def base_system(language: str = DEFAULT_LANGUAGE) -> str:
-    """The shared system prompt for every stage, with the output-language
-    instruction injected once here -- the only place any stage prompt
-    mentions language at all."""
-    return _BASE_SYSTEM_TEMPLATE.format(language_instruction=output_language_instruction(language))
+# Used only when a stage's resolved language (see
+# orchestrator.resolve_stage_language) differs from the run's own output
+# language -- i.e. the "working language" feature is actually in effect for
+# that stage (currently: an Estonian-output run's verbose intermediate
+# stages, working in English). Distinct from _OUTPUT_LANGUAGE_INSTRUCTIONS
+# above on purpose: a plain "write in English" instruction gives the model
+# no signal that the input it is reading may itself be in a different
+# language, so it would have no reason to treat Estonian facts/names/
+# constraints as authoritative rather than something to also translate away.
+# Keyed by the STAGE's language (the language to actually respond in), not
+# the run's output language.
+_WORKING_LANGUAGE_OVERRIDE_INSTRUCTIONS: dict[str, str] = {
+    "en": (
+        "OUTPUT LANGUAGE (WORKING LANGUAGE OVERRIDE)\n"
+        "The user's original input may be in a different language than this "
+        "instruction (for example, Estonian). Treat the original wording, "
+        "facts, names, constraints, and intent as authoritative. Perform this "
+        "intermediate analysis in concise English. Do not translate away, "
+        "reinterpret, or simplify important facts. Preserve quoted wording or "
+        "terms where their exact language matters. This is an internal "
+        "working-language choice for efficiency and reliability, not a "
+        "judgement about the input language -- a later stage will produce "
+        "the final user-facing answer in the originally requested language. "
+        "Keep required JSON keys, schema field names, enum values, stage "
+        "identifiers, and machine-readable values exactly as specified -- "
+        "never translate those."
+    ),
+}
+
+
+def working_language_override_instruction(stage_language: str) -> str:
+    """The working-language directive for a stage whose resolved language
+    differs from the run's output language. Falls back to the plain
+    output-language instruction for a stage_language with no dedicated
+    override wording defined (defensive: today this only ever fires for
+    "en", since "en"-output working language is the only combination that
+    exists -- see orchestrator.default_working_language)."""
+    return _WORKING_LANGUAGE_OVERRIDE_INSTRUCTIONS.get(
+        stage_language, output_language_instruction(stage_language)
+    )
+
+
+def base_system(stage_language: str, output_language: str = DEFAULT_LANGUAGE) -> str:
+    """The shared system prompt for every stage, with exactly one language
+    instruction injected here -- the only place any stage prompt mentions
+    language at all (see orchestrator.resolve_stage_language for how
+    `stage_language` is chosen).
+
+    `stage_language` is the language this particular stage should actually
+    respond in. When it equals `output_language` (every stage on an English
+    run; convergence_analysis/synthesis on any run), the plain output-
+    language instruction is used, byte-for-byte identical to this
+    function's pre-working-language behavior. When it differs (a verbose
+    intermediate stage on a non-English-output run), the working-language
+    override instruction is used instead, so the model is told explicitly
+    that the input may be in a different language than it is being asked to
+    respond in.
+    """
+    instruction = (
+        output_language_instruction(stage_language)
+        if stage_language == output_language
+        else working_language_override_instruction(stage_language)
+    )
+    return _BASE_SYSTEM_TEMPLATE.format(language_instruction=instruction)
 
 
 # Appended to base_system() for exactly one bounded recovery retry after a

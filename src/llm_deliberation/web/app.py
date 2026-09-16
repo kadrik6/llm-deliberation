@@ -36,6 +36,7 @@ from llm_deliberation.web.presenter import (
     ARTIFACT_SECTIONS,
     PROFILE_BLURB_KEYS,
     PROFILE_ORDER,
+    artifact_language_tags,
     attempt_log_phases,
     build_pipeline,
     compute_deliberation_quality,
@@ -411,6 +412,14 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
             "budget_blocked": any(
                 s.failure_reason == "run_budget_exceeded" for s in record.stages
             ),
+            # Only true when this run's working language genuinely differs
+            # from its output language -- never for a legacy run
+            # (working_language is None) or an English-output run (the two
+            # are always equal there). See web/i18n.py's
+            # working_language_note_* keys.
+            "working_language_differs": bool(
+                record.working_language and record.working_language != record.language
+            ),
         }
 
         if record.status == "succeeded":
@@ -435,6 +444,11 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
                     "artifacts": artifacts,
                     "artifact_sections": ARTIFACT_SECTIONS,
                     "evolution": evolution,
+                    # {"analysis_a": "en", ...} -- shown as a small tag next
+                    # to an artifact's summary only when it differs from the
+                    # run's output language (see result.html), so an
+                    # English run's trace is visually unchanged.
+                    "artifact_languages": artifact_language_tags(record),
                 }
             )
         else:

@@ -42,8 +42,19 @@ class FakeOrchestrator:
         name.
     state["gemini_modes"]: list[(stage, gemini_mode)] observed, so tests can
         assert which retry mode the service actually requested.
-    state["languages"]: list[(stage, language)] observed, so tests can
-        assert which run language the service actually requested.
+    state["languages"]: list[(stage, resolved_language)] observed -- the
+        actual per-stage language after applying
+        orchestrator.resolve_stage_language(stage, output_language,
+        working_language), i.e. exactly what the real orchestrator would
+        have passed to prompts.base_system for that stage. This is what
+        most existing tests care about ("which language did this stage
+        actually get"), so the key/shape is unchanged from before working-
+        language support existed -- only the *values* can now differ
+        between stages within the same run.
+    state["language_calls"]: list[(stage, output_language, working_language)]
+        observed -- the raw, un-resolved arguments service.py passed, for
+        tests that specifically want to assert on those rather than the
+        already-resolved value.
     """
 
     def __init__(self, settings, *, state: dict):
@@ -51,7 +62,13 @@ class FakeOrchestrator:
         self._state = state
 
     def stage_upper_bound_cost(
-        self, stage: str, question: str, texts: dict[str, str], *, language: str = "en"
+        self,
+        stage: str,
+        question: str,
+        texts: dict[str, str],
+        *,
+        output_language: str = "en",
+        working_language: str = "en",
     ) -> Decimal:
         # Deterministic and independent of question/context length --
         # FakeOrchestrator never touches real pricing/models. Tests that
@@ -72,12 +89,21 @@ class FakeOrchestrator:
         texts: dict[str, str],
         *,
         gemini_mode: str = "chain",
-        language: str = "en",
+        output_language: str = "en",
+        working_language: str = "en",
         budget_guard=None,
     ) -> ModelResponse:
+        from llm_deliberation.orchestrator import resolve_stage_language
+
+        resolved_language = resolve_stage_language(
+            stage, output_language=output_language, working_language=working_language
+        )
         self._state["log"].append(stage)
         self._state.setdefault("gemini_modes", []).append((stage, gemini_mode))
-        self._state.setdefault("languages", []).append((stage, language))
+        self._state.setdefault("languages", []).append((stage, resolved_language))
+        self._state.setdefault("language_calls", []).append(
+            (stage, output_language, working_language)
+        )
         self._state.setdefault("budget_guards", []).append((stage, budget_guard))
 
         fail_with = self._state.get("fail_with", {})

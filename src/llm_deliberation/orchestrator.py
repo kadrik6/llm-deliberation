@@ -51,6 +51,56 @@ ALL_STAGE_NAMES: tuple[str, ...] = tuple(
 # is always attempted but can be skipped once it has failed.
 SKIPPABLE_STAGE_NAMES: frozenset[str] = frozenset({"red_team", "convergence_analysis"})
 
+# Verbose, intermediate reasoning stages -- these may use a different
+# ("working") language than the run's own output language, purely for
+# token-efficiency/reliability (see prompts.working_language_override_instruction
+# and docs/decisions/008-working-language.md). convergence_analysis and
+# synthesis are deliberately NOT in this set: they are the user-facing
+# stages and must always produce their explanatory text in the run's output
+# language, regardless of what language earlier stages worked in.
+WORKING_LANGUAGE_STAGES: frozenset[str] = frozenset(
+    {
+        "analysis_a",
+        "analysis_b",
+        "critique_a_of_b",
+        "critique_b_of_a",
+        "red_team",
+        "revision_a",
+        "revision_b",
+    }
+)
+
+
+def default_working_language(output_language: str) -> str:
+    """The working language a NEW run should use by default, given its
+    output language. Currently always English: the working language is
+    chosen purely as an internal token-efficiency/reliability choice for
+    verbose intermediate stages, never because a non-English output
+    language is itself unsupported (see the product principle -- Estonian
+    stays a fully first-class output/UI language). If a third supported
+    output language is ever added, this is the one place its default
+    working language would be decided.
+    """
+    return "en"
+
+
+def resolve_stage_language(stage: str, *, output_language: str, working_language: str) -> str:
+    """The single centralized stage-language policy (see prompts.base_system,
+    which consumes this). A verbose intermediate stage (WORKING_LANGUAGE_STAGES)
+    resolves to `working_language`; every other stage (convergence_analysis,
+    synthesis) always resolves to `output_language`.
+
+    For a legacy run where `working_language == output_language` (see
+    service._execute's fallback: a run created before this feature existed
+    has no stored working_language, and falls back to its own output
+    language), this returns `output_language` for every stage regardless of
+    WORKING_LANGUAGE_STAGES membership -- i.e. no split behavior at all,
+    exactly reproducing this run's original, single-language behavior.
+    """
+    if stage in WORKING_LANGUAGE_STAGES:
+        return working_language
+    return output_language
+
 
 async def _call(provider: Provider, *, system: str, prompt: str, **kwargs: object) -> ModelResponse:
     # Provider SDK calls are synchronous. to_thread lets independent calls run
@@ -201,7 +251,13 @@ class DeliberationOrchestrator:
         self.convergence = _build_convergence_provider(settings)
 
     def stage_upper_bound_cost(
-        self, stage: str, question: str, texts: dict[str, str], *, language: str = "en"
+        self,
+        stage: str,
+        question: str,
+        texts: dict[str, str],
+        *,
+        output_language: str = "en",
+        working_language: str = "en",
     ) -> Decimal:
         """Conservative upper-bound cost of this stage's *initial* call, from
         the real prompt that would be sent -- used by service._execute to
@@ -214,7 +270,10 @@ class DeliberationOrchestrator:
         """
         provider = getattr(self, STAGE_PROVIDER[stage])
         prompt = _build_prompt(stage, question, texts)
-        system = prompts.base_system(language)
+        stage_language = resolve_stage_language(
+            stage, output_language=output_language, working_language=working_language
+        )
+        system = prompts.base_system(stage_language, output_language)
         prompt_chars = len(system) + len(prompt)
         if isinstance(provider, GeminiFallbackProvider):
             return max(
@@ -234,7 +293,8 @@ class DeliberationOrchestrator:
         texts: dict[str, str],
         *,
         gemini_mode: str = "chain",
-        language: str = "en",
+        output_language: str = "en",
+        working_language: str = "en",
         budget_guard: RunBudgetGuard | None = None,
     ) -> ModelResponse:
         provider = getattr(self, STAGE_PROVIDER[stage])
@@ -252,10 +312,16 @@ class DeliberationOrchestrator:
         kwargs: dict[str, object] = {"mode": gemini_mode} if stage == "red_team" else {}
         if stage == "red_team" and budget_guard is not None:
             kwargs["budget_guard"] = budget_guard
-        # language only affects the shared system prompt (see
-        # prompts.base_system) -- the user's original question is always
-        # passed through unchanged, never translated (see _build_prompt).
-        system = prompts.base_system(language)
+        # Centralized stage-language policy (see resolve_stage_language):
+        # this is the ONLY place a stage's actual language is decided. The
+        # user's original question/context is always passed through
+        # unchanged regardless of stage_language, never translated (see
+        # _build_prompt) -- only the model's own reasoning/response language
+        # changes, per prompts.base_system's language_instruction.
+        stage_language = resolve_stage_language(
+            stage, output_language=output_language, working_language=working_language
+        )
+        system = prompts.base_system(stage_language, output_language)
         response = await _call(provider, system=system, prompt=prompt, **kwargs)
 
         # Bounded automatic recovery for a clearly truncated (output-length-
@@ -272,7 +338,14 @@ class DeliberationOrchestrator:
         if response.incomplete_reason == "output_truncated" and not isinstance(
             provider, GeminiFallbackProvider
         ):
-            recovery_system = system + "\n\n" + prompts.truncation_recovery_instruction(language)
+            # Keyed by stage_language (the language this stage is actually
+            # responding in), never output_language -- an Estonian-output
+            # run's English-working-language stage must get an English
+            # "your response was cut off, retry concisely" instruction too,
+            # not an Estonian one that would pull the model back toward
+            # switching languages mid-recovery (Section 9 of the working-
+            # language work).
+            recovery_system = system + "\n\n" + prompts.truncation_recovery_instruction(stage_language)
             sunk_cost = response.estimated_cost_usd
             initial_model = response.model
             # Provenance for the initial (truncated, paid, discarded) attempt

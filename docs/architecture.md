@@ -93,10 +93,16 @@ tables:
 
 - **`runs`** -- one row per deliberation: question, optional context,
   profile, red-team flag, status, timestamps, aggregated estimated cost,
-  and `language` (`en` | `et` -- the run's output language; see
-  [ADR 007](decisions/007-bilingual-support.md)). Migrated onto existing
+  `language` (`en` | `et` -- the run's output language; see
+  [ADR 007](decisions/007-bilingual-support.md)), `max_run_cost_usd`
+  (optional application-side cost cap; see `cost_budget.py`), and
+  `working_language` (`en` | `et` | `NULL` -- the language verbose
+  intermediate stages actually used, independent of `language`; see
+  [ADR 008](decisions/008-working-language.md)). Migrated onto existing
   databases the same way the `stages` columns below are, defaulting every
-  pre-existing run to `"en"`.
+  pre-existing run to `"en"` for `language`, `NULL` for the other two (no
+  invented default -- see ADR 008 on why a legacy run's `NULL`
+  `working_language` must never be treated as `"en"`).
 - **`stages`** -- one row per stage per run: name, provider, model,
   status (`pending` / `running` / `succeeded` / `failed` / `skipped`),
   attempt count, token counts, estimated cost, error text, timestamps,

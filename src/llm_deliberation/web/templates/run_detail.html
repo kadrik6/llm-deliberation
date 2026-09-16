@@ -21,6 +21,12 @@
   {% if ui_lang != record.language %}
   <p class="language-mismatch-notice">{{ ("language_mismatch_run_" ~ record.language)|t }}</p>
   {% endif %}
+  {% if working_language_differs %}
+  <p class="working-language-note hint">
+    <strong>{{ "working_language_note_heading"|t }}</strong><br>
+    {{ "working_language_note_body"|t }}
+  </p>
+  {% endif %}
   {% if budget_blocked %}
   <div class="notice notice-warning">
     <p>{{ "run_budget_exceeded_notice"|t }}</p>

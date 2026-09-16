@@ -157,7 +157,7 @@ def test_paid_truncated_response_without_recovery_keeps_its_cost(monkeypatch):
     import asyncio
 
     response = asyncio.run(
-        orch.run_stage("analysis_a", "Q?", {}, language="en")
+        orch.run_stage("analysis_a", "Q?", {}, output_language="en")
     )
 
     assert response.incomplete_reason == "output_truncated"
@@ -174,7 +174,7 @@ def test_recovery_retry_succeeds_and_preserves_first_attempt_cost(monkeypatch):
 
     import asyncio
 
-    response = asyncio.run(orch.run_stage("analysis_a", "Q?", {}, language="en"))
+    response = asyncio.run(orch.run_stage("analysis_a", "Q?", {}, output_language="en"))
 
     assert response.incomplete_reason is None
     assert response.text == "a complete, concise answer"
@@ -208,7 +208,7 @@ def test_recovery_retry_still_truncated_stays_incomplete(monkeypatch):
 
     import asyncio
 
-    response = asyncio.run(orch.run_stage("analysis_a", "Q?", {}, language="en"))
+    response = asyncio.run(orch.run_stage("analysis_a", "Q?", {}, output_language="en"))
 
     assert response.incomplete_reason == "output_truncated"
     assert response.estimated_cost_usd == pytest.approx(0.01 + 0.02)
@@ -234,7 +234,7 @@ def test_recovery_retry_that_raises_preserves_sunk_cost(monkeypatch):
     import asyncio
 
     with pytest.raises(ProviderGenerationError) as excinfo:
-        asyncio.run(orch.run_stage("analysis_a", "Q?", {}, language="en"))
+        asyncio.run(orch.run_stage("analysis_a", "Q?", {}, output_language="en"))
 
     assert excinfo.value.estimated_cost_usd == pytest.approx(0.01)
     assert excinfo.value.reason == "output_truncated"
@@ -259,7 +259,7 @@ def test_recovery_is_exactly_one_attempt_even_if_always_truncated(monkeypatch):
 
     import asyncio
 
-    response = asyncio.run(orch.run_stage("analysis_a", "Q?", {}, language="en"))
+    response = asyncio.run(orch.run_stage("analysis_a", "Q?", {}, output_language="en"))
     assert response.incomplete_reason == "output_truncated"
     assert len(provider.calls) == 2
 
@@ -279,7 +279,7 @@ def test_empty_output_is_never_auto_retried(monkeypatch):
 
     import asyncio
 
-    response = asyncio.run(orch.run_stage("analysis_a", "Q?", {}, language="en"))
+    response = asyncio.run(orch.run_stage("analysis_a", "Q?", {}, output_language="en"))
     assert response.incomplete_reason == "empty_output"
     assert len(provider.calls) == 1  # no automatic recovery for empty_output
 
@@ -313,7 +313,7 @@ def test_recovery_is_skipped_for_gemini_fallback_provider(monkeypatch):
 
     import asyncio
 
-    response = asyncio.run(orch.run_stage("red_team", "Q?", {"analysis_a": "a", "analysis_b": "b"}, language="en"))
+    response = asyncio.run(orch.run_stage("red_team", "Q?", {"analysis_a": "a", "analysis_b": "b"}, output_language="en"))
     assert response.incomplete_reason is None
     assert fake.calls == 2  # handled entirely inside GeminiFallbackProvider's own loop
 
