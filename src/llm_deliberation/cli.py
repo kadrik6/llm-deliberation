@@ -151,7 +151,11 @@ async def _run(args: argparse.Namespace) -> int:
         return 0
 
     if args.diagnose_run:
-        from llm_deliberation.diagnostics import format_efficiency_table, stage_efficiency_rows
+        from llm_deliberation.diagnostics import (
+            format_efficiency_table,
+            format_language_contract_report,
+            stage_efficiency_rows,
+        )
 
         try:
             record = service.get_run(args.diagnose_run)
@@ -160,7 +164,11 @@ async def _run(args: argparse.Namespace) -> int:
             return 2
         print(f"Run {record.id} | output_language={record.language} | "
               f"working_language={record.working_language or '(legacy: ' + record.language + ')'}")
-        print(format_efficiency_table(stage_efficiency_rows(record)))
+        rows = stage_efficiency_rows(record)
+        print(format_efficiency_table(rows))
+        print()
+        print("Working-language contract:")
+        print(format_language_contract_report(rows))
         return 0
 
     if args.retry_stage:

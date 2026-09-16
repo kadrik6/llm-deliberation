@@ -415,6 +415,41 @@ def test_stale_running_notice_absent_with_no_running_stage(client, service):
     assert "left running from a previous session" not in detail.text
 
 
+def test_language_contract_mismatch_notice_shown_on_succeeded_run(client, service, fake_orchestrator_state):
+    """AUDIT_REPORT.md's working-language enforcement follow-up -- a
+    stage-level mismatch (even after the bounded recovery attempt) never
+    fails the run, so the compact notice must appear on the FINAL results
+    page (partials/result.html), not only the in-progress pipeline view."""
+    import asyncio
+
+    fake_orchestrator_state["responses"] = {
+        "analysis_a": {
+            "language_contract_status": "mismatched",
+            "observed_language": "et",
+            "language_recovery_attempted": True,
+        },
+    }
+    run_id = service.create_run("Q?", "economy", red_team_enabled=False, language="et")
+    record = asyncio.run(service.start_run(run_id))
+    assert record.status == "succeeded"
+
+    detail = client.get(f"/runs/{run_id}")
+    assert "Working-language instruction was not followed for this stage." in detail.text
+
+
+def test_language_contract_mismatch_notice_absent_for_a_normal_run(client, service):
+    """Normal, matched stages must never show this notice -- no clutter for
+    the common case."""
+    import asyncio
+
+    run_id = service.create_run("Q?", "economy", red_team_enabled=False)
+    record = asyncio.run(service.start_run(run_id))
+    assert record.status == "succeeded"
+
+    detail = client.get(f"/runs/{run_id}")
+    assert "Working-language instruction was not followed for this stage." not in detail.text
+
+
 def test_export_markdown_discloses_fallback(client, service, fake_orchestrator_state):
     fake_orchestrator_state["responses"] = {
         "red_team": {

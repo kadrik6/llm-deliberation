@@ -231,6 +231,18 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     # was killed/restarted mid-call (see web/app.py's stale_running_stage,
     # AUDIT_REPORT.md Section D.1/J.3). Resuming cannot know whether that
     # original call actually completed; it can only make a new one.
+    # Compact technical notice for a working-language stage where the
+    # response still did not match the requested working language even
+    # after the one bounded recovery attempt (see orchestrator.run_stage's
+    # language-contract check, AUDIT_REPORT.md's live-canary findings). The
+    # stage's artifact is still shown/used normally -- see
+    # presenter.build_pipeline's docstring -- this is a diagnostic notice
+    # about the internal working-language optimization, never a claim that
+    # the final (output-language) answer itself is wrong.
+    "working_language_contract_mismatch_notice": {
+        "en": "Working-language instruction was not followed for this stage.",
+        "et": "Selle etapi töökeele juhist ei järgitud.",
+    },
     "stale_running_notice": {
         "en": "A stage was left running from a previous session and never "
               "finished. Resuming will make a new provider call for it, "
@@ -460,12 +472,25 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "attempt_phase_recovery": {
         "en": "Concise recovery", "et": "Lühendatud kordusgenereerimine",
     },
+    # A bounded, at-most-once retry after language_detect.py confidently
+    # found a working-language stage's response in the wrong language (see
+    # orchestrator.run_stage, AUDIT_REPORT.md's live-canary findings) --
+    # distinct from "recovery" above, which is truncation-specific.
+    "attempt_phase_language_recovery": {
+        "en": "Language correction retry", "et": "Keele parandamise korduskatse",
+    },
     "attempt_outcome_output_truncated": {
         "en": "output truncated at max tokens", "et": "vastus katkes tokenite piirmäära tõttu",
     },
     "attempt_outcome_empty_output": {"en": "output empty", "et": "vastus tühi"},
     "attempt_outcome_succeeded": {"en": "succeeded", "et": "õnnestus"},
     "attempt_outcome_provider_error": {"en": "request failed", "et": "päring ebaõnnestus"},
+    "attempt_outcome_language_mismatch": {
+        "en": "wrong working language", "et": "vale töökeel",
+    },
+    "attempt_outcome_uncertain": {
+        "en": "language uncertain", "et": "keel ebaselge",
+    },
 
     # -- red-team fallback-aware timeout policy (providers.py's
     # GeminiFallbackProvider.generate) -- a model the wall-clock allocation

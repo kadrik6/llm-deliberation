@@ -404,6 +404,13 @@ def build_pipeline(record: RunRecord) -> list[dict]:
                     "model_attempts": stage.model_attempts,
                     "attempt_log": stage.attempt_log,
                     "failure_reason": stage.failure_reason,
+                    # See orchestrator.run_stage's language-contract check /
+                    # AUDIT_REPORT.md's live-canary findings. A mismatch
+                    # never fails the stage -- this is purely an additional,
+                    # separate diagnostic signal (see partials/pipeline.html:
+                    # only shown as a compact notice when still mismatched
+                    # after the one bounded recovery attempt).
+                    "language_contract_status": stage.language_contract_status,
                     "budget_timeout_model": gemini_budget_timeout_model(stage),
                     "attempts_by_model": group_attempts_by_model(stage.attempt_log),
                     "attempt_phases": attempt_log_phases(stage.attempt_log),

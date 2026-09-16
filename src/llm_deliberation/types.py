@@ -38,6 +38,18 @@ class ModelResponse:
     # succeeded once this is confirmed None (see service.py), so paid-but-
     # unusable output is never silently treated as a healthy artifact.
     incomplete_reason: str | None = None
+    # Set by orchestrator.run_stage's post-generation working-language check
+    # (see language_detect.py) -- "matched" | "mismatched" | "uncertain" |
+    # None. None means the check was not applicable to this stage (not a
+    # WORKING_LANGUAGE_STAGES member, or stage_language == output_language,
+    # i.e. no override was ever in effect for this run) -- never an invented
+    # "matched". observed_language is the detector's own best guess ("en" |
+    # "et" | None for "uncertain"); language_recovery_attempted is True only
+    # when a confident mismatch triggered the one bounded corrective retry
+    # (see prompts.language_recovery_instruction).
+    language_contract_status: str | None = None
+    observed_language: str | None = None
+    language_recovery_attempted: bool = False
 
 
 @dataclass(slots=True)

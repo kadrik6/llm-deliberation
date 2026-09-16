@@ -6,6 +6,7 @@ from decimal import Decimal
 from llm_deliberation import convergence, prompts
 from llm_deliberation.config import Settings
 from llm_deliberation.cost_budget import BudgetExceededError, RunBudgetGuard, estimate_max_call_cost_usd
+from llm_deliberation.language_detect import classify_language_contract
 from llm_deliberation.providers import (
     AnthropicProvider,
     GeminiFallbackProvider,
@@ -480,6 +481,125 @@ class DeliberationOrchestrator:
                 },
             ]
             response.estimated_cost_usd += sunk_cost
+
+        # Working-language contract check -- bounded, at most one corrective
+        # recovery call. Only runs when an override is actually in effect
+        # (stage_language != output_language; for an English-only run these
+        # are always equal, so this is a no-op there) and only once the
+        # response is confirmed complete (never on an already-truncated
+        # response -- the block above already handles that, and partial
+        # text is not meaningful evidence for language detection either).
+        # A real live canary run showed gpt-5.6-terra silently answering in
+        # Estonian on this exact instruction despite it being verified
+        # correct (Anthropic's claude-sonnet-5 complied on the same run) --
+        # see AUDIT_REPORT.md's live-canary findings and language_detect.py.
+        # GeminiFallbackProvider (red_team) gets detection but NOT the
+        # active recovery call, for the same reason truncation-recovery
+        # above already excludes it: it has its own internal retry/fallback
+        # loop, and stacking a second, separate recovery layer on top would
+        # double-apply retries for that one stage specifically.
+        if (
+            stage in WORKING_LANGUAGE_STAGES
+            and stage_language != output_language
+            and response.incomplete_reason is None
+        ):
+            status, observed, _evidence = classify_language_contract(
+                response.text, expected_language=stage_language
+            )
+            if status != "mismatched" or isinstance(provider, GeminiFallbackProvider):
+                response.language_contract_status = status
+                response.observed_language = observed
+            else:
+                recovery_system = system + "\n\n" + prompts.language_recovery_instruction(
+                    stage_language
+                )
+                sunk_cost = response.estimated_cost_usd
+                initial_model = response.model
+                prior_attempt_log = response.attempt_log
+                prior_model_attempts = response.model_attempts
+                initial_attempt = {
+                    "phase": "initial",
+                    "model": initial_model,
+                    "outcome": "language_mismatch",
+                    "detected_language": observed,
+                    "estimated_cost_usd": sunk_cost,
+                }
+                if budget_guard is not None:
+                    # Mirrors the truncation-recovery block above exactly:
+                    # this stage's already-incurred (mismatched, but paid)
+                    # cost is recorded first so the affordability check for
+                    # the recovery call itself sees the true running total.
+                    budget_guard.record_actual(Decimal(str(sunk_cost)))
+                    recovery_prompt_chars = len(recovery_system) + len(prompt)
+                    estimated_recovery_cost = estimate_max_call_cost_usd(
+                        initial_model,
+                        prompt_chars=recovery_prompt_chars,
+                        max_output_tokens=provider.max_output_tokens,
+                    )
+                    try:
+                        budget_guard.check(estimated_recovery_cost)
+                    except BudgetExceededError as budget_exc:
+                        raise budget_exceeded_to_provider_error(
+                            budget_exc,
+                            requested_model=initial_model,
+                            attempts=prior_model_attempts,
+                            attempt_log=(prior_attempt_log or []) + [initial_attempt],
+                            fallback_used=False,
+                            fallback_reason=None,
+                            sunk_cost_usd=sunk_cost,
+                        ) from budget_exc
+                recovered = await _call(provider, system=recovery_system, prompt=prompt, **kwargs)
+                recovery_cost = recovered.estimated_cost_usd
+                if recovered.incomplete_reason is not None:
+                    # The recovery call itself came back empty/truncated --
+                    # that failure mode takes precedence and is handled by
+                    # the normal incomplete_reason path in service._execute
+                    # (this stage fails, exactly as any other truncated/empty
+                    # response would). Best-effort language provenance is
+                    # still preserved: the confident mismatch that triggered
+                    # this recovery attempt, plus the fact a recovery was
+                    # tried, so a human reviewing the failure sees the full
+                    # picture rather than just "truncated".
+                    recovery_failure_entry = {
+                        "phase": "language_recovery",
+                        "model": recovered.model,
+                        "outcome": recovered.incomplete_reason,
+                        "estimated_cost_usd": recovery_cost,
+                    }
+                    recovered.language_contract_status = "mismatched"
+                    recovered.observed_language = observed
+                    recovered.language_recovery_attempted = True
+                    recovered.model_attempts = prior_model_attempts + 1
+                    recovered.attempt_log = (prior_attempt_log or [initial_attempt]) + [
+                        recovery_failure_entry
+                    ]
+                    recovered.estimated_cost_usd += sunk_cost
+                    response = recovered
+                else:
+                    recovery_status, recovery_observed, _ev2 = classify_language_contract(
+                        recovered.text, expected_language=stage_language
+                    )
+                    recovery_outcome = (
+                        "succeeded" if recovery_status == "matched" else
+                        "uncertain" if recovery_status == "uncertain" else
+                        "language_mismatch"
+                    )
+                    recovery_attempt = {
+                        "phase": "language_recovery",
+                        "model": recovered.model,
+                        "outcome": recovery_outcome,
+                        "detected_language": recovery_observed,
+                        "estimated_cost_usd": recovery_cost,
+                    }
+                    recovered.language_contract_status = recovery_status
+                    recovered.observed_language = recovery_observed
+                    recovered.language_recovery_attempted = True
+                    recovered.model_attempts = prior_model_attempts + 1
+                    recovered.attempt_log = (prior_attempt_log or [initial_attempt]) + [
+                        recovery_attempt
+                    ]
+                    recovered.estimated_cost_usd += sunk_cost
+                    response = recovered
 
         # Only ever attempt to parse/validate a response that is not itself
         # already known to be incomplete -- a response still truncated even

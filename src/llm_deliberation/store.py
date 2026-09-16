@@ -47,6 +47,19 @@ class StageRecord:
     # existed has this as None even if it once failed -- a neutral legacy
     # default, not an invented classification (see store._STAGE_MIGRATION_COLUMNS).
     failure_reason: str | None = None
+    # Working-language contract provenance (see language_detect.py,
+    # orchestrator.run_stage, AUDIT_REPORT.md's live-canary findings) --
+    # "matched" | "mismatched" | "uncertain" | None. None for any stage
+    # predating this feature, any stage the check does not apply to
+    # (convergence_analysis, synthesis, or a stage with no working-language
+    # override in effect), and for a "uncertain" observed_language pairing
+    # is possible too (detector could not classify confidently). A mismatch
+    # NEVER fails the stage on its own (see mark_stage_succeeded) -- do not
+    # conflate this with failure_reason, which stays None here even when
+    # language_contract_status == "mismatched".
+    language_contract_status: str | None = None
+    observed_language: str | None = None
+    language_recovery_attempted: bool = False
 
 
 @dataclass(slots=True)
@@ -153,6 +166,9 @@ _STAGE_MIGRATION_COLUMNS: dict[str, str] = {
     "model_attempts": "INTEGER NOT NULL DEFAULT 1",
     "attempt_log": "TEXT",
     "failure_reason": "TEXT",
+    "language_contract_status": "TEXT",
+    "observed_language": "TEXT",
+    "language_recovery_attempted": "INTEGER NOT NULL DEFAULT 0",
 }
 
 # A run created before bilingual support existed gets "en" -- a stated,
@@ -396,6 +412,9 @@ class Repository:
             model_attempts=row["model_attempts"],
             attempt_log=json.loads(attempt_log_raw) if attempt_log_raw else None,
             failure_reason=row["failure_reason"],
+            language_contract_status=row["language_contract_status"],
+            observed_language=row["observed_language"],
+            language_recovery_attempted=bool(row["language_recovery_attempted"]),
         )
 
     def mark_stage_running(self, stage_id: int) -> None:
@@ -421,6 +440,9 @@ class Repository:
         fallback_reason: str | None = None,
         model_attempts: int = 1,
         attempt_log: list[dict] | None = None,
+        language_contract_status: str | None = None,
+        observed_language: str | None = None,
+        language_recovery_attempted: bool = False,
     ) -> None:
         now = utc_now_iso()
         row = self._conn.execute(
@@ -443,6 +465,8 @@ class Repository:
             "estimated_cost_usd = estimated_cost_usd + ?, "
             "requested_model = ?, fallback_used = ?, fallback_reason = ?, "
             "model_attempts = ?, attempt_log = ?, "
+            "language_contract_status = ?, observed_language = ?, "
+            "language_recovery_attempted = ?, "
             "error = NULL, failure_reason = NULL, completed_at = ? WHERE id = ?",
             (
                 provider,
@@ -455,6 +479,9 @@ class Repository:
                 fallback_reason,
                 model_attempts,
                 json.dumps(attempt_log) if attempt_log is not None else None,
+                language_contract_status,
+                observed_language,
+                int(language_recovery_attempted),
                 now,
                 stage_id,
             ),
@@ -478,6 +505,9 @@ class Repository:
         attempt_log: list[dict] | None = None,
         estimated_cost_usd: float = 0.0,
         failure_reason: str | None = None,
+        language_contract_status: str | None = None,
+        observed_language: str | None = None,
+        language_recovery_attempted: bool = False,
     ) -> None:
         # estimated_cost_usd accumulates -- see the matching note in
         # mark_stage_succeeded. A stage retried multiple times, each
@@ -487,7 +517,9 @@ class Repository:
             "UPDATE stages SET status = 'failed', error = ?, completed_at = ?, "
             "requested_model = ?, fallback_used = ?, fallback_reason = ?, "
             "model_attempts = ?, attempt_log = ?, "
-            "estimated_cost_usd = estimated_cost_usd + ?, failure_reason = ? "
+            "estimated_cost_usd = estimated_cost_usd + ?, failure_reason = ?, "
+            "language_contract_status = ?, observed_language = ?, "
+            "language_recovery_attempted = ? "
             "WHERE id = ?",
             (
                 error,
@@ -499,6 +531,9 @@ class Repository:
                 json.dumps(attempt_log) if attempt_log is not None else None,
                 estimated_cost_usd,
                 failure_reason,
+                language_contract_status,
+                observed_language,
+                int(language_recovery_attempted),
                 stage_id,
             ),
         )

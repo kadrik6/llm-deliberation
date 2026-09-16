@@ -39,6 +39,21 @@ class StageEfficiencyRow:
     # (e.g. "output_truncated") or, if that predates failure_reason
     # entirely, the raw stage status -- never invented.
     finish_reason: str
+    # Working-language contract provenance (see language_detect.py,
+    # orchestrator.run_stage) -- "matched" | "mismatched" | "uncertain" |
+    # None (not applicable: no override was in effect for this stage, or
+    # this run predates the feature). observed_language is the detector's
+    # own best guess ("en"/"et"/None). Never inferred retroactively here --
+    # this is exactly what was persisted at generation time.
+    language_contract_status: str | None
+    observed_language: str | None
+    language_recovery_attempted: bool
+    # The detector's *first* (pre-recovery) observation, when recovery was
+    # attempted -- read from attempt_log's "initial" phase entry, never
+    # inferred. None when recovery was not attempted (observed_language
+    # above already *is* the only observation in that case) or the stored
+    # attempt_log predates this detail.
+    initial_observed_language: str | None
 
 
 def stage_efficiency_rows(record: RunRecord) -> list[StageEfficiencyRow]:
@@ -56,6 +71,9 @@ def stage_efficiency_rows(record: RunRecord) -> list[StageEfficiencyRow]:
             finish_reason = "completed"
         else:
             finish_reason = stage.failure_reason or stage.status
+        initial_observed_language = None
+        if stage.language_recovery_attempted and stage.attempt_log:
+            initial_observed_language = stage.attempt_log[0].get("detected_language")
         rows.append(
             StageEfficiencyRow(
                 stage=stage.name,
@@ -65,6 +83,10 @@ def stage_efficiency_rows(record: RunRecord) -> list[StageEfficiencyRow]:
                 output_tokens=stage.output_tokens,
                 estimated_cost_usd=stage.estimated_cost_usd,
                 finish_reason=finish_reason,
+                language_contract_status=stage.language_contract_status,
+                observed_language=stage.observed_language,
+                language_recovery_attempted=stage.language_recovery_attempted,
+                initial_observed_language=initial_observed_language,
             )
         )
     return rows
@@ -86,4 +108,38 @@ def format_efficiency_table(rows: list[StageEfficiencyRow]) -> str:
             f"{row.stage:<22} {row.language_used:<5} {row.input_tokens:>7} "
             f"{row.output_tokens:>7} ${row.estimated_cost_usd:>8.4f}  {row.finish_reason}"
         )
+    return "\n".join(lines)
+
+
+def format_language_contract_report(rows: list[StageEfficiencyRow]) -> str:
+    """Per-stage working-language contract detail -- e.g. was an Estonian-
+    output run's English-working-language analysis stage actually answered
+    in English, and if not, did the bounded recovery attempt fix it. Only
+    covers stages the check actually applied to (language_contract_status is
+    not None); every other stage (an English-only run, convergence_analysis,
+    synthesis, or a stage predating this feature) is silently omitted, not
+    padded with meaningless "n/a" rows. Especially useful for comparing how
+    reliably different configured models actually follow this instruction
+    (see AUDIT_REPORT.md's live-canary findings).
+    """
+    applicable = [row for row in rows if row.language_contract_status is not None]
+    if not applicable:
+        return "(no working-language contract checks applied to this run)"
+    lines: list[str] = []
+    for row in applicable:
+        lines.append(f"{row.stage}:")
+        lines.append(f"  requested working language: {row.language_used}")
+        if row.language_recovery_attempted:
+            lines.append(f"  observed language: {row.initial_observed_language or 'uncertain'}")
+            lines.append("  recovery: attempted")
+            lines.append(f"  final observed language: {row.observed_language or 'uncertain'}")
+            status_label = (
+                "matched after recovery" if row.language_contract_status == "matched"
+                else row.language_contract_status
+            )
+        else:
+            lines.append(f"  observed language: {row.observed_language or 'uncertain'}")
+            lines.append("  recovery: not needed")
+            status_label = row.language_contract_status
+        lines.append(f"  status: {status_label}")
     return "\n".join(lines)

@@ -64,20 +64,33 @@ def output_language_instruction(language: str) -> str:
 # Keyed by the STAGE's language (the language to actually respond in), not
 # the run's output language.
 _WORKING_LANGUAGE_OVERRIDE_INSTRUCTIONS: dict[str, str] = {
+    # Strengthened after a real live run showed OpenAI's gpt-5.6-terra
+    # silently answering in Estonian on this exact instruction (Anthropic's
+    # claude-sonnet-5 complied correctly on the same run) -- see
+    # AUDIT_REPORT.md's live-canary findings. The original wording ("Perform
+    # this intermediate analysis in concise English") was truthful but never
+    # explicitly ruled out mirroring the source material's language; this
+    # version says so directly, still without hardcoding any specific
+    # provider or source language as logic (Estonian remains only a
+    # parenthetical example, exactly as before).
     "en": (
         "OUTPUT LANGUAGE (WORKING LANGUAGE OVERRIDE)\n"
-        "The user's original input may be in a different language than this "
-        "instruction (for example, Estonian). Treat the original wording, "
-        "facts, names, constraints, and intent as authoritative. Perform this "
-        "intermediate analysis in concise English. Do not translate away, "
-        "reinterpret, or simplify important facts. Preserve quoted wording or "
-        "terms where their exact language matters. This is an internal "
-        "working-language choice for efficiency and reliability, not a "
-        "judgement about the input language -- a later stage will produce "
-        "the final user-facing answer in the originally requested language. "
-        "Keep required JSON keys, schema field names, enum values, stage "
-        "identifiers, and machine-readable values exactly as specified -- "
-        "never translate those."
+        "The source material you are given may be written in a different "
+        "language than this instruction (for example, Estonian). This is an "
+        "internal working stage, not the final user-facing answer. Write "
+        "your entire response -- all analytical prose -- in English, "
+        "regardless of what language the source material is in. Do not "
+        "mirror, follow, or match the source material's language. Do not "
+        "answer in the source material's language. Preserve names, direct "
+        "quotations, and legal/technical terms in their original language "
+        "only where their exact wording matters; otherwise write in English "
+        "throughout. Treat the source's facts, constraints, and intent as "
+        "authoritative -- do not translate them away, reinterpret them, or "
+        "simplify them; only the language you respond in changes. A later, "
+        "separate stage will produce the final user-facing answer in the "
+        "originally requested language. Keep required JSON keys, schema "
+        "field names, enum values, stage identifiers, and machine-readable "
+        "values exactly as specified -- never translate those."
     ),
 }
 
@@ -150,6 +163,37 @@ _TRUNCATION_RECOVERY_INSTRUCTIONS: dict[str, str] = {
 def truncation_recovery_instruction(language: str = DEFAULT_LANGUAGE) -> str:
     return _TRUNCATION_RECOVERY_INSTRUCTIONS.get(
         language, _TRUNCATION_RECOVERY_INSTRUCTIONS[DEFAULT_LANGUAGE]
+    )
+
+
+# Appended to base_system() for exactly one bounded recovery retry after
+# language_detect.classify_language_contract() confidently found a working-
+# language stage's response in the wrong language (see orchestrator.run_stage
+# and AUDIT_REPORT.md's live-canary findings). Never used for "uncertain" --
+# only a confident mismatch triggers this, and at most once per stage, ever.
+# Keyed by stage_language (the language the stage should actually respond
+# in), same convention as _WORKING_LANGUAGE_OVERRIDE_INSTRUCTIONS above.
+_LANGUAGE_RECOVERY_INSTRUCTIONS: dict[str, str] = {
+    "en": (
+        "IMPORTANT: your previous response to this exact task used the wrong "
+        "working language -- it did not follow the English working-language "
+        "instruction. Regenerate the same analysis, in English only. "
+        "Preserve the same facts, reasoning, constraints, and conclusions as "
+        "your previous response; do not change your analysis, only the "
+        "language you write it in. Do not mirror the source material's "
+        "language. Do not mention this instruction or your previous response."
+    ),
+}
+
+
+def language_recovery_instruction(stage_language: str = DEFAULT_LANGUAGE) -> str:
+    """The corrective-recovery directive for a working-language stage whose
+    prior response was confidently detected in the wrong language. Falls
+    back to the plain working-language override wording for a stage_language
+    with no dedicated recovery text defined (defensive, mirroring
+    working_language_override_instruction's own fallback)."""
+    return _LANGUAGE_RECOVERY_INSTRUCTIONS.get(
+        stage_language, working_language_override_instruction(stage_language)
     )
 
 

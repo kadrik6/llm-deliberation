@@ -187,6 +187,9 @@ class DeliberationService:
                 fallback_reason=stage.fallback_reason,
                 model_attempts=stage.model_attempts,
                 attempt_log=stage.attempt_log,
+                language_contract_status=stage.language_contract_status,
+                observed_language=stage.observed_language,
+                language_recovery_attempted=stage.language_recovery_attempted,
             )
 
         def optional_response(name: str) -> ModelResponse | None:
@@ -448,6 +451,9 @@ class DeliberationService:
                         attempt_log=outcome.attempt_log,
                         estimated_cost_usd=outcome.estimated_cost_usd,
                         failure_reason=outcome.incomplete_reason,
+                        language_contract_status=outcome.language_contract_status,
+                        observed_language=outcome.observed_language,
+                        language_recovery_attempted=outcome.language_recovery_attempted,
                     )
                     run_failed = True
                 else:
@@ -464,6 +470,9 @@ class DeliberationService:
                         fallback_reason=outcome.fallback_reason,
                         model_attempts=outcome.model_attempts,
                         attempt_log=outcome.attempt_log,
+                        language_contract_status=outcome.language_contract_status,
+                        observed_language=outcome.observed_language,
+                        language_recovery_attempted=outcome.language_recovery_attempted,
                     )
                     texts[name] = outcome.text
 

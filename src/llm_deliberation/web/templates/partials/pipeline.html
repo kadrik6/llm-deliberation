@@ -143,6 +143,18 @@
             </form>
           {% endif %}
         {% endif %}
+        {% if not row.disabled and row.status == 'succeeded' and row.language_contract_status == 'mismatched' %}
+          {# Diagnostic-only: the stage's artifact is still shown/used
+             normally (see orchestrator.run_stage's language-contract
+             check -- a mismatch never fails the stage). Independent of the
+             fallback/attempts branch above so it also appears for a
+             red_team mismatch, which gets detection but not an active
+             recovery call and so may never bump model_attempts. Full
+             detail (requested vs. observed language, whether recovery was
+             tried) belongs in trace/diagnostics, not here -- see
+             `llm-deliberate --diagnose-run`. #}
+          <p class="hint stage-language-notice">{{ "working_language_contract_mismatch_notice"|t }}</p>
+        {% endif %}
       </div>
     {% endfor %}
   </div>

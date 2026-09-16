@@ -116,7 +116,12 @@ def test_4_to_7_verbose_stages_resolve_to_english_on_an_estonian_run(stage):
 
     system_prompt = base_system(resolved, "et")
     assert "WORKING LANGUAGE OVERRIDE" in system_prompt
-    assert "concise English" in system_prompt
+    # Strengthened wording (see AUDIT_REPORT.md's live-canary findings: a
+    # real run showed a model silently mirroring the source language
+    # despite the original, weaker "Perform this intermediate analysis in
+    # concise English" wording) -- now explicitly rules out mirroring.
+    assert "in English" in system_prompt
+    assert "Do not mirror" in system_prompt
     assert "Estonian" in system_prompt  # mentions the original may be Estonian
     # And must NOT contain a contradictory plain "write in Estonian" directive.
     assert "Write all user-facing analytical content in natural Estonian" not in system_prompt
@@ -141,7 +146,7 @@ def test_no_contradictory_language_instructions_anywhere_in_one_system_prompt():
         mentions_estonian_directive = "natural Estonian" in system_prompt
         mentions_english_directive = (
             "Write all user-facing analytical content in English" in system_prompt
-            or "concise English" in system_prompt
+            or "Write your entire response -- all analytical prose -- in English" in system_prompt
         )
         assert mentions_estonian_directive != mentions_english_directive
 

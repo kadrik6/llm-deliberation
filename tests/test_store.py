@@ -187,6 +187,99 @@ def test_run_created_before_max_run_cost_usd_column_existed_opens_correctly(tmp_
     assert repo.get_run("old1").max_run_cost_usd == "5.00"
 
 
+def test_language_contract_fields_round_trip(tmp_path):
+    """AUDIT_REPORT.md's J-follow-up (working-language enforcement) --
+    language_contract_status/observed_language/language_recovery_attempted
+    persist and read back correctly, and default to None/False when not
+    passed (the common case: an English-only run, or any stage the check
+    does not apply to)."""
+    repo = Repository(tmp_path / "db.sqlite3")
+    repo.insert_run("run1", question="Q?", context=None, profile="economy", red_team_enabled=False)
+    stage_id = repo.insert_stage("run1", "analysis_a")
+
+    repo.mark_stage_succeeded(
+        stage_id,
+        provider="OpenAI",
+        model="gpt-5.6-terra",
+        text="hello",
+        input_tokens=5,
+        output_tokens=7,
+        estimated_cost_usd=0.01,
+        language_contract_status="mismatched",
+        observed_language="et",
+        language_recovery_attempted=True,
+    )
+    stage = repo.get_stage("run1", stage_id)
+    assert stage.language_contract_status == "mismatched"
+    assert stage.observed_language == "et"
+    assert stage.language_recovery_attempted is True
+
+    stage_id_2 = repo.insert_stage("run1", "analysis_b")
+    repo.mark_stage_succeeded(
+        stage_id_2,
+        provider="Anthropic",
+        model="claude-sonnet-5",
+        text="hi",
+        input_tokens=5,
+        output_tokens=7,
+        estimated_cost_usd=0.01,
+    )
+    stage2 = repo.get_stage("run1", stage_id_2)
+    assert stage2.language_contract_status is None
+    assert stage2.observed_language is None
+    assert stage2.language_recovery_attempted is False
+
+
+def test_run_created_before_language_contract_columns_existed_opens_correctly(tmp_path):
+    """Reproduces a database from before the working-language enforcement
+    columns existed -- opens fine, new columns read back as None/False, no
+    historical row is touched or requires re-inference (see
+    language_contract_status's own docstring: never inferred retroactively)."""
+    import sqlite3
+
+    db_path = tmp_path / "old.sqlite3"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE runs (
+            id TEXT PRIMARY KEY, question TEXT NOT NULL, context TEXT,
+            profile TEXT NOT NULL, red_team_enabled INTEGER NOT NULL,
+            status TEXT NOT NULL, created_at TEXT NOT NULL, started_at TEXT,
+            completed_at TEXT, estimated_total_cost_usd REAL NOT NULL DEFAULT 0.0,
+            language TEXT NOT NULL DEFAULT 'en'
+        );
+        CREATE TABLE stages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, name TEXT NOT NULL,
+            provider TEXT, model TEXT, status TEXT NOT NULL DEFAULT 'pending',
+            attempt INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0, estimated_cost_usd REAL NOT NULL DEFAULT 0.0,
+            error TEXT, started_at TEXT, completed_at TEXT
+        );
+        CREATE TABLE artifacts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, stage_id INTEGER NOT NULL,
+            artifact_type TEXT NOT NULL, text_content TEXT NOT NULL, created_at TEXT NOT NULL
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO runs (id, question, context, profile, red_team_enabled, status, "
+        "created_at, estimated_total_cost_usd, language) "
+        "VALUES ('old1', 'Old question?', NULL, 'economy', 0, 'succeeded', "
+        "'2025-01-01T00:00:00+00:00', 0.01, 'en')"
+    )
+    conn.execute(
+        "INSERT INTO stages (run_id, name, status) VALUES ('old1', 'analysis_a', 'succeeded')"
+    )
+    conn.commit()
+    conn.close()
+
+    repo = Repository(db_path)
+    stage = repo.get_stage("old1", "analysis_a")
+    assert stage.language_contract_status is None
+    assert stage.observed_language is None
+    assert stage.language_recovery_attempted is False
+
+
 def test_stage_cost_accumulates_across_two_failed_attempts(tmp_path):
     repo = Repository(tmp_path / "db.sqlite3")
     repo.insert_run("run1", question="Q?", context=None, profile="economy", red_team_enabled=False)

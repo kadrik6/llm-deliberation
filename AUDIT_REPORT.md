@@ -565,3 +565,279 @@ without needing any artificial token cap to do it.
 Everything above is proposed only. **No live/paid API call has been made.**
 Awaiting your review of the canary questions/limits/cost ceiling before I
 run Canary 1.
+
+---
+
+## Live Canary Results (2026-09-16)
+
+**Frozen code state tested:** commit `0539a9208a7cdec21beffe61c7747bf77a6d0e64`
+("Release-candidate reliability audit fixes (J.1-J.5)"), the same state that
+produced `529 passed, 0 failed` offline. Python 3.14.4, openai 3.13.0,
+anthropic 1.5.0, google-genai 2.23.0.
+
+### CANARY 1 — PASS
+
+Fresh DB `data/canary1.db`, run `04b5ea950a54`, profile=economy,
+red-team=ON, language=en. Question: "Should a 12-person nonprofit switch its
+donor database from spreadsheets to a dedicated CRM tool this quarter,
+given a limited budget and one part-time admin staff member?" (context:
+none).
+
+All 9 stages `succeeded`. Notably, `red_team`'s preferred model
+(`gemini-3.8-flash`) hit a real transient `HTTP 500` on its first attempts;
+the fallback-aware chain correctly recovered to `gemini-3.6-flash` after 3
+real attempts, well inside the wall-clock budget — the Task 4 fix verified
+live, for real, against an actual transient failure (not a simulated one).
+`convergence_analysis` used 3,072 output tokens (no truncation).
+`quality level: complete`, `reasons: []`. Total duration 366.2s. **Total
+exact cost: $0.2810** (well under the $1.00 cap).
+
+### CANARY 2 — mechanically reached synthesis with Complete quality, but ONE required semantic check failed
+
+Fresh DB `data/canary2.db`, run `3d69c6ef289c`, profile=economy,
+red-team=OFF, language=et, working_language=en (auto). Question (natural
+Estonian translation of the same decision problem): "Kas 12 töötajaga
+mittetulundusühing peaks selle kvartali jooksul loobuma tabelarvutusest ja
+võtma annetajate andmebaasi haldamiseks kasutusele spetsiaalse
+CRM-tarkvara, arvestades piiratud eelarvet ja vaid üht osalise tööajaga
+haldustöötajat?" (context: none).
+
+All 8 stages (no `red_team` row, as configured) `succeeded`. `quality
+level: complete`, `reasons: []` — the disabled red-team correctly produced
+no degradation, exactly as designed. Total duration 293.1s. **Total exact
+cost: $0.3374** (well under the $1.00 cap).
+
+Checked against every item in your "Verify specifically" list:
+
+| Check | Result |
+|---|---|
+| Original Estonian Question unchanged in storage | **OK** — read back byte-identical from `record.question`. |
+| Original Estonian Context unchanged | **OK** — `None`, unchanged (none was supplied). |
+| `analysis_a` uses English working language | **FAILED — see below.** |
+| `analysis_b` uses English working language | OK — genuinely English text. |
+| `critique_a_of_b` uses English working language | **FAILED — see below.** |
+| `critique_b_of_a` uses English working language | OK — genuinely English text. |
+| `revision_a` uses English working language | **FAILED — see below.** |
+| `revision_b` uses English working language | OK — genuinely English text. |
+| `convergence_analysis` textual values are Estonian | OK — `before`/`after`/`summary` fields are natural Estonian. |
+| `convergence_analysis` schema keys/enums stay canonical English | OK — `"convergence": "converged"`, `"change_status": "material"`, `"source": "peer_critique"`, `"candidate": "A"` etc. all untranslated. |
+| `synthesis` is natural Estonian | OK — fluent Estonian prose, correctly structured. |
+| Red-team absence treated as configured, not degraded | OK — no stage row created at all; quality stayed `complete`. |
+
+**Root-cause analysis of the failed check** (per your format):
+
+- **Failed check**: working-language policy for `analysis_a`, `critique_a_of_b`,
+  `revision_a` — every stage this run routed to **OpenAI** (`gpt-5.6-terra`).
+  The equivalent Anthropic-routed stages (`analysis_b`, `critique_b_of_a`,
+  `revision_b`, all `claude-sonnet-5`) complied correctly.
+- **Configured/requested model**: `gpt-5.6-terra` (economy profile). **Actual
+  model used**: same — no fallback, no substitution.
+- **Fallback attempts**: none (`fallback_used: False`); **attempt count**: 1
+  for each affected stage. **Stop/finish status**: `succeeded` — the call
+  completed normally and was accepted as a valid, non-truncated response;
+  nothing in the response signaled a problem.
+- **Typed `failure_reason`**: `None` — correctly so; this is not a
+  transport/format failure the app's classifiers are meant to catch. It is
+  a semantic/content compliance issue orthogonal to every typed failure
+  category in `store.py`.
+- **Technical diagnostic**: I reconstructed the *exact* system prompt the
+  live code sent, via `orchestrator.resolve_stage_language("analysis_a",
+  output_language="et", working_language="en")` → `"en"`, then
+  `prompts.base_system("en", output_language="et")`. The instruction is
+  unambiguous: *"Perform this intermediate analysis in concise English. ...
+  a later stage will produce the final user-facing answer in the originally
+  requested language."* **The application-side prompt construction is
+  verified correct** — this is not a code bug in `resolve_stage_language`,
+  `base_system`, or the language-selection wiring in `service.py`/
+  `orchestrator.py`.
+- **Input/output tokens, stage cost**: `analysis_a` 579 in / 2,793 out /
+  $0.0347; `critique_a_of_b` 1,752 in / 2,177 out / $0.0296; `revision_a`
+  4,266 in / 1,869 out / $0.0310 — all normal, unremarkable, nothing
+  suggesting a truncation or retry.
+- **Classification**: **provider (model instruction-following behavior)**
+  — not application logic, not an SDK contract mismatch, not structured
+  output, not timeout, not budget, not persistence. Given a verified-correct
+  instruction, `gpt-5.6-terra` chose to mirror the Estonian question's
+  language instead of following the explicit English-working-language
+  directive; `claude-sonnet-5`, given the identical instruction pattern,
+  complied correctly. This is a real difference in how the two configured
+  models follow this specific kind of instruction under real conditions —
+  something a `FakeOrchestrator`-based offline test can never surface,
+  since it never asks a real model to choose a language.
+- **Already-completed paid stages**: all fully valid and reusable — nothing
+  is corrupted, mismatched, or unusable. The run **completed successfully
+  end-to-end** with a `complete` quality rating; every stage's content is
+  internally consistent and the final Estonian synthesis is coherent and
+  correctly grounded in the (partially Estonian-language) intermediate
+  work. The only defect is that the token-efficiency/consistency rationale
+  behind the working-language feature (see `docs/decisions/008-working-language.md`)
+  was not honored for one provider on 3 of 6 applicable stages.
+
+This is a **newly discovered finding**, not previously documented as a known
+limitation anywhere in the codebase (`docs/decisions/008-working-language.md`
+does not currently disclose that the working-language instruction is
+best-effort/not guaranteed to be followed by every model).
+
+### FINAL VERDICT
+
+```
+OFFLINE RELEASE GATE: PASS
+LIVE RELEASE GATE:    FAIL
+RELEASE VERIFICATION: FAIL
+```
+
+Reasoning: both canaries mechanically reached final synthesis with
+`quality level: complete`, and Canary 1 satisfied every required semantic
+check with no exceptions (including a real, unplanned live exercise of the
+Gemini fallback chain). But Canary 2 did not satisfy all required stage
+semantics you listed — the English-working-language requirement was
+violated by the OpenAI-routed stages, a genuine, reproducible-pattern
+finding (not a fluke: 3 of 3 OpenAI-routed working-language stages
+affected, 0 of 3 Anthropic-routed ones). Per your instruction ("Do not
+describe a partial pipeline as 'mostly passed.'"), I am not rounding this
+up to PASS.
+
+**Total spend: $0.2810 + $0.3374 = $0.6184**, against the $2.00 approved
+ceiling. No further paid calls were made. No code changes were made. Not
+pushed.
+
+Awaiting your direction on how to treat this finding (e.g. accept as a
+documented model-behavior limitation and re-verify, strengthen the
+working-language instruction and re-run a canary, or something else) — no
+action taken beyond this report.
+
+---
+
+## Working-Language Enforcement Follow-Up (2026-09-16)
+
+Implemented per your directive: make the working-language policy observable
+and enforceable with bounded cost, without removing the feature, redefining
+Estonian as acceptable, or adding a second LLM call. **Not committed, not
+pushed. No further live/paid API calls made.**
+
+**1-2. Prompt/contract reproduction:** confirmed offline (see the
+before-implementation report above) — the application's system prompt for
+`analysis_a`/`critique_a_of_b`/`revision_a` was already unambiguous and
+carried no contradictory instruction. The finding is genuine model
+non-compliance, not a code defect.
+
+**Strengthened instruction** (`prompts.py`): `_WORKING_LANGUAGE_OVERRIDE_INSTRUCTIONS["en"]`
+now explicitly says "Do not mirror, follow, or match the source material's
+language. Do not answer in the source material's language," on top of the
+original (still-correct, but insufficiently explicit) wording. Still keyed
+generically by `stage_language`, not hardcoded to Estonian/OpenAI.
+
+**3-4. Observed-language contract + local detector** (new `language_detect.py`):
+pure-stdlib heuristic (closed-class stopword-fraction matching + Estonian-
+exclusive diacritic density, over code/JSON-stripped text), returning
+`"en"` / `"et"` / `None` ("uncertain"). No dependency added — none existed,
+and a general NLP library was judged disproportionate and not obviously
+better at the specific false-positive modes (short/mixed/code-heavy text)
+than a small, transparent, purpose-built heuristic. **Validated against the
+real Canary 2 artifacts** before wiring it in: correctly classified all 6
+working-language stages (3 matched, 3 mismatched) exactly as a human
+reading them would, plus a quoted-foreign-phrase edge case, a code-only
+case, and a too-short case.
+
+**5-6. Fail vs. degrade:** implemented your preference exactly — a mismatch
+(even after recovery) never fails the stage or the run; `compute_deliberation_quality`
+is untouched; a new, separate `language_contract_status` is the only
+consumer, so "usable artifact" and "working-language contract satisfied"
+are never conflated.
+
+**Bounded corrective recovery** (`orchestrator.run_stage`): on a confident
+mismatch, exactly one retry with a stronger, explicit recovery instruction
+(`prompts.language_recovery_instruction`) — same provider/model/stage,
+existing `RunBudgetGuard` applied exactly as truncation-recovery already
+does, cost of both attempts preserved, `attempt_log` gains a
+`"language_recovery"` phase entry reusing the existing phase-based
+attempt-log rendering (no new template machinery needed). An `"uncertain"`
+result never triggers recovery. `red_team` (`GeminiFallbackProvider`) gets
+detection only, no active recovery call — mirroring the existing
+truncation-recovery precedent for the identical reason (its own internal
+retry/fallback loop; stacking a second one would double-apply retries).
+
+**7. Provenance:** 3 new additive `stages` columns
+(`language_contract_status`, `observed_language`,
+`language_recovery_attempted`) plus matching `ModelResponse`/`StageRecord`
+fields, threaded through `service._execute` and `service.to_run_result`.
+Historical runs read back `None`/`False` — never inferred retroactively.
+
+**8. UI:** compact notice (`working_language_contract_mismatch_notice`,
+EN/ET) shown only when a stage is still mismatched after recovery — added
+to **both** `partials/pipeline.html` (in-progress/failed view) **and**
+`partials/result.html` (the final-answer view a succeeded run actually
+renders — a mismatch never fails the run, so this was the page that
+mattered and needed its own fix to `service.to_run_result` to carry the
+fields through). No badge for the normal, matched case.
+
+**9. Diagnostics:** `llm-deliberate --diagnose-run RUN_ID` now prints a
+"Working-language contract" section per stage (requested/observed/final
+observed language, whether recovery was attempted, final status) — new
+`diagnostics.format_language_contract_report`.
+
+**10. Offline tests:** all 18 requested scenarios covered, across
+`tests/test_language_detect.py` (11 tests: detector behavior, quoted-phrase/
+code-heavy/short-text/mixed-text edge cases, no-SDK-import source check) and
+`tests/test_language_contract.py` (10 tests: matched/uncertain/mismatched
+end-to-end through `orchestrator.run_stage`, exactly-one-recovery bound,
+same-provider/stronger-instruction, cost accumulation, provenance,
+synthesis/English-only-run untouched, provider-independence via a second
+provider slot, `red_team` detection-only, budget-guard interaction) plus
+2 store-level tests (round-trip persistence, historical-DB compatibility)
+and 2 web-level tests (notice shown/absent on the actual succeeded-run
+page). Two **pre-existing** tests in `test_working_language.py` asserted
+the literal old instruction wording ("concise English") and were updated
+(not deleted) to check the new, stronger wording — the underlying
+assertion (no contradictory language directives) is unchanged and still
+passes.
+
+### Bug caught during implementation, before it shipped
+
+My first version of the mismatch-notice template change caused a
+`jinja2.UndefinedError` for a *disabled* stage row (e.g. red-team-off,
+which has no `.status` at all) because the new `{% if row.status == ... %}`
+block ran unconditionally after the existing status if/elif chain, with no
+`not row.disabled` guard. The full offline suite caught this immediately
+(44 unrelated-looking failures, all the same root cause) before I ran it
+narrowly — fixed by adding the guard; full suite green afterward.
+
+### Offline gate results
+
+```
+NORMAL TEST SUITE: PASS  (533 passed)
+RELEASE GATE:       PASS  (21 passed)
+Combined:                 554 passed, 0 failed
+```
+
+Also re-run and passing: `py_compile` (all `src/`+`tests/`), `node --check`
+(`app.js`, unmodified this pass), both historical-DB migration/read
+compatibility tests (including a new one for the 3 new columns), and the
+full retry/resume/skip suite (44 tests) — unaffected by this change.
+
+### Changed / new files
+
+```
+M  AUDIT_REPORT.md
+M  src/llm_deliberation/cli.py
+M  src/llm_deliberation/diagnostics.py
+M  src/llm_deliberation/orchestrator.py
+M  src/llm_deliberation/prompts.py
+M  src/llm_deliberation/service.py
+M  src/llm_deliberation/store.py
+M  src/llm_deliberation/types.py
+M  src/llm_deliberation/web/i18n.py
+M  src/llm_deliberation/web/presenter.py
+M  src/llm_deliberation/web/templates/partials/pipeline.html
+M  src/llm_deliberation/web/templates/partials/result.html
+M  tests/test_store.py
+M  tests/test_web.py
+M  tests/test_working_language.py
+?? src/llm_deliberation/language_detect.py
+?? tests/test_language_contract.py
+?? tests/test_language_detect.py
+```
+
+Nothing staged, committed, or pushed. Awaiting your review before the
+minimal live language probe (Section 11 of your instructions) — not
+executed.

@@ -131,6 +131,16 @@
       </p>
       {% endif %}
       {% endif %}
+      {% if artifact.language_contract_status == "mismatched" %}
+        {# Diagnostic-only: the artifact above is still shown/used normally
+           -- see orchestrator.run_stage's language-contract check (a
+           mismatch never fails the stage). Independent of the
+           fallback/attempts block above so it also appears for a red_team
+           mismatch, which never gets an active recovery call and so may
+           never bump model_attempts. See AUDIT_REPORT.md's live-canary
+           findings; full detail via `llm-deliberate --diagnose-run`. #}
+        <p class="hint stage-language-notice">{{ "working_language_contract_mismatch_notice"|t }}</p>
+      {% endif %}
     </details>
     {% endif %}
   {% endfor %}
