@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 from llm_deliberation.orchestrator import SKIPPABLE_STAGE_NAMES, resolve_stage_language
@@ -393,3 +394,81 @@ def build_pipeline(record: RunRecord) -> list[dict]:
             )
         groups.append({"title": title, "rows": rows})
     return groups
+
+
+# -- Question/Context preview metadata (run_detail.html + history.html) -----
+#
+# Long stored input (a Question can run up to service.MAX_QUESTION_LENGTH =
+# 4000 chars; Context has no length cap at all) was pushing the pipeline and
+# results far below the fold. Nothing here ever mutates, summarizes, or
+# truncates the *stored* text -- run_detail.html always renders
+# record.question / record.context verbatim, in full, somewhere in the
+# page; these are purely deterministic, presentation-only signals for
+# whether/how to collapse that already-complete text by default (CSS
+# line-clamp for Question, a native <details> disclosure for Context -- see
+# static/style.css and the templates).
+
+# A deliberately rough, conservative gate for "is this Question long enough
+# to need a collapse-by-default affordance at all" -- NOT a precise line
+# count (that depends on the viewer's rendered font/width, which no
+# server-side code can know). Roughly 3 lines at a typical prose width.
+# Below this, the Question renders as plain, unwrapped text (see the "if
+# Question fits naturally, show it fully" requirement) -- the *visual*
+# clamping for a long Question is pure CSS, not a second, finer threshold.
+QUESTION_PREVIEW_CHAR_THRESHOLD = 220
+
+# A hard, deterministic character slice for the History page's row preview
+# (Python string slicing is Unicode-code-point based, so this can never
+# split a UTF-8 byte sequence -- only ever a codepoint/character boundary).
+# Comfortably inside the task's "approximately 120-200 characters" range.
+# The full Question remains one click away via the row's own link.
+HISTORY_QUESTION_PREVIEW_CHARS = 160
+
+_PARAGRAPH_SPLIT_RE = re.compile(r"\n\s*\n")
+
+
+def question_is_long(question: str) -> bool:
+    return len(question) > QUESTION_PREVIEW_CHAR_THRESHOLD
+
+
+def history_question_preview(question: str) -> str:
+    """A short, deterministic preview for one History row -- never the
+    full Question, never Context (see the module docstring's "History
+    should not render Context" requirement -- history.html simply never
+    passes Context through at all)."""
+    if len(question) <= HISTORY_QUESTION_PREVIEW_CHARS:
+        return question
+    return question[:HISTORY_QUESTION_PREVIEW_CHARS].rstrip() + "…"
+
+
+def context_section_count(context: str) -> int:
+    """A deliberately simple, deterministic approximation: the number of
+    blank-line-separated paragraphs in `context`. Not a semantic or
+    structural parser -- see the task brief's explicit "if reliable section
+    counting is not trivial, character count alone is enough; do not
+    invent a fragile parser" guidance. Any non-empty context with no blank
+    lines at all still counts as one section; empty/whitespace-only context
+    is zero.
+    """
+    stripped = context.strip()
+    if not stripped:
+        return 0
+    return len([p for p in _PARAGRAPH_SPLIT_RE.split(stripped) if p.strip()])
+
+
+def input_preview(record: RunRecord) -> dict:
+    """Deterministic preview metadata for one run's original Question/
+    Context, computed once here rather than duplicated across
+    run_detail.html's running/failed/succeeded branches. Every field is a
+    pure function of the already-stored text -- nothing here is persisted,
+    and nothing here is what actually gets rendered as the Question/Context
+    content itself (the templates always render record.question /
+    record.context directly).
+    """
+    context = record.context or ""
+    return {
+        "question_is_long": question_is_long(record.question),
+        "context_present": bool(context.strip()),
+        "context_char_count": len(context),
+        "context_section_count": context_section_count(context),
+    }

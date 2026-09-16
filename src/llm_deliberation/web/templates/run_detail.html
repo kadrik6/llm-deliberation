@@ -3,9 +3,28 @@
 {% block content %}
 <div class="run-meta">
   <h1>{{ "deliberation_heading"|t }}</h1>
-  <p class="question-text"><strong>{{ "question_meta_label"|t }}</strong> {{ record.question }}</p>
-  {% if record.context %}
-  <p class="context-text"><strong>{{ "context_meta_label"|t }}</strong> {{ record.context }}</p>
+  <div class="question-block">
+    <strong>{{ "question_meta_label"|t }}</strong>
+    {% if preview.question_is_long %}
+    <p class="question-text question-clamp">{{ record.question }}</p>
+    <details class="question-details">
+      <summary>{{ "show_full_question"|t }}</summary>
+      <p class="question-text">{{ record.question }}</p>
+    </details>
+    {% else %}
+    <p class="question-text">{{ record.question }}</p>
+    {% endif %}
+  </div>
+  {% if preview.context_present %}
+  <details class="context-details">
+    <summary>
+      {{ "context_meta_label"|t }}
+      {{ preview.context_char_count|format_count_label("character") }} &middot;
+      {{ preview.context_section_count|count_label("section") }} &middot;
+      {{ "show_context_button"|t }}
+    </summary>
+    <p class="context-text">{{ record.context }}</p>
+  </details>
   {% endif %}
   <div class="meta-row">
     <span>{{ "run_id_label"|t }}: <code>{{ record.id }}</code></span>

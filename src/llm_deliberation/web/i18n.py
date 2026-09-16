@@ -153,6 +153,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "deliberation_heading": {"en": "Deliberation", "et": "Arutelu"},
     "question_meta_label": {"en": "Question:", "et": "Küsimus:"},
     "context_meta_label": {"en": "Context:", "et": "Kontekst:"},
+    # -- run detail: compact Question/Context preview (see
+    # presenter.input_preview) -- never a summary of the content, just a
+    # native <details> disclosure over the exact stored text.
+    "show_full_question": {"en": "Show full question", "et": "Näita kogu küsimust"},
+    "show_context_button": {"en": "Show context", "et": "Näita konteksti"},
     "run_id_label": {"en": "Run ID", "et": "Käigu ID"},
     "profile_meta_label": {"en": "Profile", "et": "Profiil"},
     "language_meta_label": {"en": "Language", "et": "Keel"},
@@ -589,6 +594,19 @@ _COUNT_NOUNS: dict[str, dict[str, tuple[str, str]]] = {
         "en": ("minute ago", "minutes ago"),
         "et": ("minut tagasi", "minutit tagasi"),
     },
+    # Run detail's compact Context summary (see presenter.input_preview /
+    # run_detail.html) -- "character" via format_count_label (thousands
+    # separator, since Context has no length cap and can run into the
+    # thousands), "section" via the plain count_label (paragraph counts
+    # stay small).
+    "character": {
+        "en": ("character", "characters"),
+        "et": ("tähemärk", "tähemärki"),
+    },
+    "section": {
+        "en": ("section", "sections"),
+        "et": ("jaotis", "jaotist"),
+    },
 }
 
 
@@ -599,3 +617,19 @@ def count_label(key: str, count: int, lang: str) -> str:
     singular, plural = forms
     noun = singular if count == 1 else plural
     return f"{count} {noun}"
+
+
+def format_count_label(key: str, count: int, lang: str) -> str:
+    """Like count_label, but with a locale-appropriate thousands separator
+    on the digits themselves (English: comma, "4,382"; Estonian: space,
+    "4 382" -- the conventional Estonian digit-group separator). For a
+    count that can plausibly run into the thousands (e.g. a long Context's
+    character count -- Context has no stored length cap), where
+    count_label's bare digits would read poorly.
+    """
+    forms = _COUNT_NOUNS[key].get(lang) or _COUNT_NOUNS[key][DEFAULT_UI_LANGUAGE]
+    singular, plural = forms
+    noun = singular if count == 1 else plural
+    separator = " " if lang == "et" else ","
+    formatted_number = f"{count:,}".replace(",", separator)
+    return f"{formatted_number} {noun}"

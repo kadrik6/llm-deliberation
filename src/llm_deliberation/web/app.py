@@ -30,6 +30,7 @@ from llm_deliberation.web.i18n import (
     NATIVE_LANGUAGE_NAMES,
     SUPPORTED_UI_LANGUAGES,
     count_label,
+    format_count_label,
     translate,
 )
 from llm_deliberation.web.markdown_render import render_markdown_safe, split_synthesis_sections
@@ -45,6 +46,8 @@ from llm_deliberation.web.presenter import (
     format_datetime,
     format_duration,
     group_attempts_by_model,
+    history_question_preview,
+    input_preview,
     is_terminal_run_status,
 )
 
@@ -191,11 +194,18 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
     def _count_label_filter(context: jinja2.runtime.Context, count: int, key: str) -> str:
         return count_label(key, count, context.get("ui_lang", DEFAULT_UI_LANGUAGE))
 
+    @jinja2.pass_context
+    def _format_count_label_filter(context: jinja2.runtime.Context, count: int, key: str) -> str:
+        return format_count_label(key, count, context.get("ui_lang", DEFAULT_UI_LANGUAGE))
+
     # UI-chrome translation only (see web/i18n.py) -- {{ "key"|t }} reads
     # whatever "ui_lang" is in that template's own render context, never a
     # run's own output language.
     templates.env.filters["t"] = _translate_filter
     templates.env.filters["count_label"] = _count_label_filter
+    templates.env.filters["format_count_label"] = _format_count_label_filter
+    # Never touches the stored text itself -- see presenter.history_question_preview.
+    templates.env.filters["history_question_preview"] = history_question_preview
     # Fail loudly on a missing template variable instead of silently
     # rendering blank -- caught a real bug (missing run_id/status in the
     # run_detail context) during development.
@@ -441,6 +451,12 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
             "working_language_differs": bool(
                 record.working_language and record.working_language != record.language
             ),
+            # Deterministic collapse/expand metadata for the original
+            # Question/Context -- see presenter.input_preview. The
+            # template always renders record.question/record.context
+            # verbatim, in full, somewhere on the page; this only decides
+            # how much of it is visible by default.
+            "preview": input_preview(record),
         }
 
         if record.status == "succeeded":

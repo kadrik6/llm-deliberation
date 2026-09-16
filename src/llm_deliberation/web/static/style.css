@@ -220,7 +220,47 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 .working-language-note { margin-top: 0.5rem; }
 
 .run-meta { margin-bottom: 1.5rem; }
-.question-text, .context-text { white-space: pre-wrap; }
+.question-text, .context-text {
+  white-space: pre-wrap;
+  /* A long unbroken token (a URL, an id) must not force horizontal
+     scrolling on a narrow viewport -- see the accessibility/mobile
+     requirement. */
+  overflow-wrap: anywhere;
+}
+
+.question-block { margin-top: 0.5rem; }
+
+/* Collapsed-by-default preview for a long Question -- pure CSS clamp over
+   the exact stored text (see presenter.input_preview), never a server-side
+   substring. Shown only when preview.question_is_long; a short Question
+   renders as plain text with neither this class nor the details below. */
+.question-clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.question-details, .context-details {
+  margin-top: 0.4rem;
+  border: none;
+  background: none;
+  padding: 0;
+}
+.question-details summary, .context-details summary {
+  font-weight: normal;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.question-details[open] .question-text { margin-top: 0.4rem; }
+.context-details .context-text { margin-top: 0.5rem; }
+
+/* Progressive enhancement only: in browsers that support :has(), hide the
+   redundant 3-line clamp once the full Question is already expanded below
+   it. Browsers without :has() simply show both -- still correct, just a
+   little redundant, never broken. */
+.question-block:has(.question-details[open]) .question-clamp { display: none; }
 
 .meta-row {
   display: flex;
@@ -605,6 +645,8 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 
 .history-table th { padding: 0.7rem 0.9rem; color: var(--text-muted); font-weight: 600; }
+
+.history-question-preview { overflow-wrap: anywhere; }
 
 .history-table .row-link {
   display: block;
