@@ -841,3 +841,105 @@ M  tests/test_working_language.py
 Nothing staged, committed, or pushed. Awaiting your review before the
 minimal live language probe (Section 11 of your instructions) — not
 executed.
+
+**Update:** this state was committed locally as `300e9b0f10d6f2135d2aec76012b367f003df679`
+before any further live calls (not pushed).
+
+---
+
+## Live Language Probe (2026-09-16)
+
+Frozen/tested state: commit `300e9b0f10d6f2135d2aec76012b367f003df679`,
+Python 3.14.4, openai 3.13.0, model `gpt-5.6-terra`. Single real call
+through the production path (`Settings` → `DeliberationOrchestrator.run_stage`
+→ `resolve_stage_language` → `base_system`/`independent_analysis` →
+`OpenAIProvider` → `classify_language_contract`), stage `analysis_a`,
+requested working language `en`, Estonian question/context (small nonprofit
+CRM decision case, no personal data).
+
+Result: Terra answered in English on the first attempt (`observed=en`,
+`language_contract_status=matched`, no recovery needed, 1 call,
+input 689 / output 2194 tokens, cost $0.0277, 40.9s).
+
+**LIVE LANGUAGE PROBE: PASS** (Case A — matched immediately; the recovery
+path itself was not exercised by this particular call, since Terra
+complied on the first attempt this time).
+
+---
+
+## Canary 2 Rerun (2026-09-16) — full result
+
+Frozen/tested state: commit `300e9b0f10d6f2135d2aec76012b367f003df679`
+(same as Canary 1's original run and the live probe above). Fresh DB
+`data/canary2-rerun.db` (never reused the original Canary 2 DB), run
+`c6af9936a337`, profile=economy, red-team=OFF, output language Estonian,
+working language English (auto), `max_run_cost_usd=$1.00`. Question (same
+small nonprofit CRM decision case, translated to Estonian, no personal
+data): "Kas 12 töötajaga mittetulundusühing peaks selle kvartali jooksul
+loobuma tabelarvutusest ja võtma annetajate andmebaasi haldamiseks
+kasutusele spetsiaalse CRM-tarkvara, arvestades piiratud eelarvet ja vaid
+üht osalise tööajaga haldustöötajat?" (context: none).
+
+### Stage table
+
+| Stage | Provider | Requested model | Actual model | Requested lang | Observed lang | Recovery? | In tok | Out tok | Attempts | Cost | Status |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| analysis_a | OpenAI | gpt-5.6-terra | gpt-5.6-terra | en | en | No | 639 | 2340 | 1 | $0.0294 | succeeded |
+| analysis_b | Anthropic | claude-sonnet-5 | claude-sonnet-5 | en | en | No | 1018 | 4854 | 1 | $0.0506 | succeeded |
+| critique_a_of_b | OpenAI | gpt-5.6-terra | gpt-5.6-terra | en | en | No | 1809 | 1423 | 1 | $0.0207 | succeeded |
+| critique_b_of_a | Anthropic | claude-sonnet-5 | claude-sonnet-5 | en | en | No | 4551 | 3675 | 1 | $0.0459 | succeeded |
+| revision_a | OpenAI | gpt-5.6-terra | gpt-5.6-terra | en | en | No | 3650 | 1395 | 1 | $0.0240 | succeeded |
+| revision_b | Anthropic | claude-sonnet-5 | claude-sonnet-5 | en | en | No | 5215 | 2218 | 1 | $0.0326 | succeeded |
+| convergence_analysis | Anthropic | claude-sonnet-5 | claude-sonnet-5 | et (n/a check) | — | No | 19378 | 4440 | 1 | $0.0832 | succeeded |
+| synthesis | OpenAI | gpt-5.6-terra | gpt-5.6-terra | et (n/a check) | — | No | 4842 | 1870 | 1 | $0.0321 | succeeded |
+
+(`convergence_analysis`/`synthesis` are out of scope for the working-language
+check by design — see AUDIT_REPORT.md's earlier scoping note — so their
+`language_contract_status` is correctly `None`; verified manually below
+instead.)
+
+- Total duration: 253.3s. Total exact cost: **$0.3184**.
+- Quality level: `complete`, reasons: `[]`.
+- Convergence status: `succeeded`. Synthesis status: `succeeded`.
+- No `red_team` stage row exists at all (red-team was disabled, exactly as
+  configured — not a degradation).
+- **Language mismatches on first attempt: 0. Successfully repaired: 0.
+  Remaining mismatched/uncertain: 0.** All 6 working-language stages
+  (including all 3 OpenAI-routed ones that failed in the original Canary 2)
+  matched on the very first attempt — the strengthened instruction alone
+  was sufficient this run; the bounded-recovery mechanism was available but
+  not needed.
+
+**Manually verified** (read directly from the persisted artifacts):
+- Question stored verbatim in Estonian, byte-identical.
+- `convergence_analysis`: schema keys/enums (`"convergence": "partial"`,
+  `"change_status": "material"`, `"source": "peer_critique"`, `"candidate":
+  "A"`, etc.) remain canonical English; `before`/`after`/`summary` textual
+  values are natural Estonian. No malformed/free-form JSON fallback — the
+  native Anthropic structured-output path succeeded directly.
+- `synthesis`: fluent, natural Estonian, grounded in the Estonian
+  question/English-language intermediate analysis (not a mechanical
+  translation of the English artifacts).
+
+### FINAL VERDICT
+
+```
+OFFLINE RELEASE GATE: PASS   (533 normal + 21 release-gate = 554 passed, 0 failed)
+LIVE LANGUAGE PROBE:  PASS
+CANARY 1:             PASS
+CANARY 2:             PASS
+LIVE RELEASE GATE:    PASS
+RELEASE VERIFICATION: PASS
+```
+
+All 8 required criteria for Canary 2 were met: all 8 intended stages
+succeeded; no unintended red-team call; all 6 verbose stages matched
+(trivially, with zero recoveries needed); convergence structured output
+succeeded; convergence textual content is Estonian; synthesis is Estonian;
+quality is Complete; cost/provenance accounting is correct throughout.
+
+Total spend across the live-verification phase (probe + Canary 2 rerun):
+$0.0277 + $0.3184 = **$0.3461**. Canary 1 ($0.2810, from the earlier run)
+remains valid and was not rerun, per your instruction. Nothing was
+committed beyond the already-frozen `300e9b0f10d6f2135d2aec76012b367f003df679`;
+no code changes were made during this phase; nothing pushed.
