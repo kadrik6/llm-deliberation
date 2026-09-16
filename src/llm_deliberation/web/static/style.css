@@ -108,6 +108,24 @@ details {
 details summary { cursor: pointer; font-weight: 600; }
 details textarea { margin-top: 0.75rem; }
 
+/* Low-prominence variant for the optional manual provider-readiness
+   recheck -- deliberately quieter than a regular details/fieldset so it
+   reads as a tucked-away diagnostic, not a primary form field. Closed by
+   default; only opens on its own after a successful manual check (see
+   index.html), never merely because Start ran the automatic check. */
+.advanced-diagnostics {
+  border: none;
+  background: none;
+  padding: 0;
+}
+.advanced-diagnostics summary {
+  font-weight: normal;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+.advanced-diagnostics p,
+.advanced-diagnostics button { margin-top: 0.5rem; }
+
 fieldset {
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -181,23 +199,12 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 .notice-error { background: var(--danger-bg); border-color: var(--danger); }
 .notice-warning { background: #fff7e6; }
 
-/* Compact provider-readiness status line -- deliberately just one small,
-   secondary row, not a standalone card. Full per-provider detail only ever
-   appears inside .readiness-details, reserved for an actual failure (see
-   index.html). */
-.readiness-status-line { margin: 0 0 1rem; }
-.link-button {
-  background: none;
-  border: none;
-  padding: 0;
-  margin-left: 0.3em;
-  color: var(--accent, #1a5fb4);
-  text-decoration: underline;
-  font-size: inherit;
-  cursor: pointer;
-}
-.link-button:hover { opacity: 0.8; }
-
+/* No default-visible provider-readiness UI at all -- readiness runs
+   automatically on Start and only ever surfaces here on an actual
+   failure/warning (.readiness-details below, or the Gemini-unavailable
+   .notice-warning). The optional manual recheck lives in
+   .advanced-diagnostics instead, deliberately styled lower-prominence than
+   the surrounding form fields. */
 .readiness-details { margin-bottom: 1.25rem; }
 .readiness-list { list-style: none; padding: 0; margin: 0.5rem 0; }
 .readiness-list li { padding: 0.2rem 0; }

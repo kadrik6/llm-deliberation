@@ -23,31 +23,13 @@
 </div>
 {% endif %}
 
-<!-- Compact provider-readiness status: a small secondary control, not a
-     standalone card -- see docs/decisions/009-compact-readiness-ux.md.
-     Readiness itself still runs automatically when Start is pressed (using
-     a fresh cached result when one exists, see submit_run); this element
-     only ever shows full per-provider detail when there is an actual
-     failure to explain -- a success never expands beyond one line. -->
-<p class="readiness-status-line hint">
-  {% if not readiness %}
-    {{ "provider_check_automatic_label"|t }}
-    <button type="submit" form="new-run-form" formaction="/providers/check" formmethod="post" class="link-button">
-      {{ "check_now_button"|t }}
-    </button>
-  {% elif readiness.required_ready %}
-    {{ "providers_ready_label"|t }} &middot;
-    {% if readiness_minutes_ago == 0 %}
-      {{ "checked_just_now"|t }}
-    {% else %}
-      {{ "checked_prefix"|t }} {{ readiness_minutes_ago|count_label("minute_ago") }}
-    {% endif %}
-    <button type="submit" form="new-run-form" formaction="/providers/check" formmethod="post" class="link-button">
-      {{ "check_again_button"|t }}
-    </button>
-  {% endif %}
-</p>
-
+<!-- No provider readiness UI here by default: the check itself still runs
+     automatically when Start Deliberation is clicked (using a fresh cached
+     result when one exists -- see submit_run), and a successful outcome
+     proceeds straight into the run, silently. Only an actual failure or
+     warning ever surfaces something: this block below, or the
+     Gemini-unavailable notice above. The optional manual recheck lives in
+     the low-prominence "Advanced" disclosure near the end of this form. -->
 {% if readiness and not readiness.required_ready %}
 <div class="notice notice-error readiness-details">
   <h2>{{ "readiness_heading"|t }}</h2>
@@ -141,6 +123,24 @@
       value="{{ max_run_cost_value or '' }}">
     <p class="hint">{{ "max_run_cost_helper"|t }}</p>
   </fieldset>
+
+  <details class="advanced-diagnostics" {% if readiness and readiness.required_ready %}open{% endif %}>
+    <summary>{{ "advanced_readiness_summary"|t }}</summary>
+    <p class="hint">{{ "provider_check_automatic_label"|t }}</p>
+    {% if readiness and readiness.required_ready %}
+    <p class="hint">
+      {{ "providers_ready_label"|t }} &middot;
+      {% if readiness_minutes_ago == 0 %}
+        {{ "checked_just_now"|t }}
+      {% else %}
+        {{ "checked_prefix"|t }} {{ readiness_minutes_ago|count_label("minute_ago") }}
+      {% endif %}
+    </p>
+    {% endif %}
+    <button type="submit" form="new-run-form" formaction="/providers/check" formmethod="post">
+      {{ "check_now_button"|t }}
+    </button>
+  </details>
 
   <p class="privacy-disclosure">{{ "privacy_disclosure"|t }}</p>
   {% if gemini_unavailable_choice %}

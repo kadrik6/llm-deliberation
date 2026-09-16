@@ -65,15 +65,35 @@ def _patch_readiness(monkeypatch, *, openai_ready=True, anthropic_ready=True, ge
     monkeypatch.setattr(service_module.readiness, "check_run_readiness", fake)
 
 
-# -- 1: large readiness card no longer renders by default --------------------
+# -- 1: no readiness row/button appears in the default new-run form ----------
 
 
-def test_1_large_readiness_card_not_rendered_by_default(client):
+def test_1_no_readiness_row_visible_by_default(client):
     body = client.get("/").text
     assert "readiness-panel" not in body
     assert "readiness-list" not in body
     assert "readiness-details" not in body
-    assert "Provider readiness" not in body  # the full-card heading
+    assert "Provider readiness" not in body  # the full-card/failure heading
+    # No compact status line either -- nothing about readiness is shown up
+    # front at all now, not even a one-line summary.
+    assert "Providers ready" not in body
+    assert "readiness-status-line" not in body
+
+
+def test_1_manual_check_control_exists_but_stays_closed_by_default(client):
+    """The optional manual recheck control still exists in the page (it is
+    not deleted -- see the task's "Do not remove readiness functionality"),
+    but lives inside a closed <details> disclosure so nothing about it is
+    visible until the visitor explicitly opens it.
+    """
+    body = client.get("/").text
+    assert '<details class="advanced-diagnostics"' in body
+    assert "Check now" in body  # present in markup...
+    # ...but the <details> tag itself carries no "open" attribute, so it
+    # renders collapsed until the visitor clicks its <summary>.
+    advanced_start = body.index('<details class="advanced-diagnostics"')
+    tag_end = body.index(">", advanced_start)
+    assert "open" not in body[advanced_start:tag_end]
 
 
 def test_1_large_readiness_card_not_rendered_after_successful_check(client, monkeypatch):
@@ -82,7 +102,8 @@ def test_1_large_readiness_card_not_rendered_after_successful_check(client, monk
         "/providers/check",
         data={"profile": "economy", "language": "en", "question": "", "context": ""},
     ).text
-    # A successful check stays compact -- no per-provider list/expanded card.
+    # A successful check stays compact, tucked inside the Advanced
+    # disclosure -- no per-provider list/expanded card anywhere.
     assert "readiness-list" not in body
     assert "readiness-details" not in body
 
@@ -192,8 +213,11 @@ def test_4_successful_readiness_proceeds_directly_to_run(client, service):
     run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
     record = service.get_run(run_id)
     assert record.status == "succeeded"  # FakeOrchestrator resolves instantly
-    # No leftover readiness card/notice on the resulting run page.
+    # No leftover readiness card/notice on the resulting run page -- a
+    # successful check is entirely silent, not just compact.
     assert "readiness-details" not in response.text
+    assert "Providers ready" not in response.text
+    assert "Provider readiness" not in response.text
 
 
 # -- 7: compact manual "Check now" control -----------------------------------
@@ -256,9 +280,11 @@ def test_readiness_ready_status_strings_render_en(client, monkeypatch):
         "/providers/check",
         data={"profile": "economy", "language": "en", "question": "", "context": ""},
     ).text
+    # Shown inside the low-prominence Advanced disclosure only -- see
+    # test_1_large_readiness_card_not_rendered_after_successful_check.
     assert "Providers ready" in body
     assert "checked" in body.lower()
-    assert "Check again" in body
+    assert "Check now" in body
 
 
 def test_readiness_ready_status_strings_render_et(client, monkeypatch):
@@ -270,7 +296,7 @@ def test_readiness_ready_status_strings_render_et(client, monkeypatch):
     ).text
     assert "Teenusepakkujad on valmis" in body
     assert "kontrollitud" in body.lower()
-    assert "Kontrolli uuesti" in body
+    assert "Kontrolli kohe" in body
 
 
 # -- Check providers route ---------------------------------------------------
@@ -284,7 +310,7 @@ def test_check_providers_shows_ready_status(client):
     assert response.status_code == 200
     body = response.text
     assert "ready" in body
-    assert "Check again" in body
+    assert "Check now" in body
 
 
 def test_check_providers_preserves_typed_question_and_context(client):

@@ -451,17 +451,25 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "Deliberation cannot start: a required provider is not ready.",
         "et": "Arutelu ei saa alustada: nõutav teenusepakkuja pole valmis.",
     },
-    # -- compact readiness status line (replaces the old always-visible
-    # readiness card -- see docs/decisions/009-compact-readiness-ux.md).
-    # Shown when Start hasn't triggered a readiness check yet on this page
-    # view and no fresh cached result exists to display.
+    # -- provider readiness (no default-visible UI -- see
+    # docs/decisions/009-compact-readiness-ux.md and its follow-up).
+    # Readiness runs automatically when Start is pressed; nothing is shown
+    # here at all unless there is an actual failure/warning
+    # (readiness_required_failed_notice below, or the Gemini-unavailable
+    # notice), or the visitor opens the low-prominence "Advanced" disclosure
+    # to trigger a manual recheck.
+    "advanced_readiness_summary": {
+        "en": "Advanced: provider readiness check",
+        "et": "Täpsemalt: teenusepakkujate valmisoleku kontroll",
+    },
     "provider_check_automatic_label": {
         "en": "Provider check: automatic", "et": "Teenusepakkuja kontroll: automaatne",
     },
     "check_now_button": {"en": "Check now", "et": "Kontrolli kohe"},
-    # Shown once a readiness result exists and every required provider is
-    # ready -- deliberately compact, never the full per-provider list (that
-    # stays reserved for an actual failure/warning -- see index.html).
+    # Shown inside the Advanced disclosure once a manual check has actually
+    # been run and every required provider is ready -- deliberately
+    # compact, never the full per-provider list (that stays reserved for an
+    # actual failure/warning -- see index.html).
     "providers_ready_label": {"en": "Providers ready", "et": "Teenusepakkujad on valmis"},
     "checked_prefix": {"en": "checked", "et": "kontrollitud"},
     "checked_just_now": {"en": "checked just now", "et": "kontrollitud just nüüd"},
