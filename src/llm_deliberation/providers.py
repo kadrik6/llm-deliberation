@@ -156,11 +156,22 @@ class AnthropicProvider(Provider):
         *,
         timeout_seconds: float = DEFAULT_PROVIDER_TIMEOUT_SECONDS,
         max_retries: int = DEFAULT_PROVIDER_MAX_RETRIES,
+        response_schema: dict[str, object] | None = None,
     ):
         super().__init__(
             model, max_output_tokens, timeout_seconds=timeout_seconds, max_retries=max_retries
         )
         self.effort = effort
+        # When set, requests Anthropic's native structured output
+        # (output_config.format) so the model's generation is constrained to
+        # match this JSON schema, rather than relying on prompt text asking
+        # for JSON and parsing whatever free-form text comes back. Already
+        # translated into the shape Anthropic's API expects (e.g. via
+        # anthropic.transform_schema) -- this class stays provider-specific
+        # plumbing only, never a domain model; see orchestrator.py's
+        # _build_convergence_provider for the one caller that sets this
+        # today (the convergence_analysis stage).
+        self.response_schema = response_schema
 
     def generate(self, *, system: str, prompt: str) -> ModelResponse:
         import anthropic
@@ -171,11 +182,14 @@ class AnthropicProvider(Provider):
         # this application's point of view -- the empirically-confirmed root
         # cause of a real run stalling for ~38 minutes in this stage.
         client = anthropic.Anthropic(timeout=self.timeout_seconds, max_retries=self.max_retries)
+        output_config: dict[str, object] = {"effort": self.effort}
+        if self.response_schema is not None:
+            output_config["format"] = {"type": "json_schema", "schema": self.response_schema}
         message = client.messages.create(
             model=self.model,
             max_tokens=self.max_output_tokens,
             system=system,
-            output_config={"effort": self.effort},
+            output_config=output_config,
             messages=[{"role": "user", "content": prompt}],
         )
 

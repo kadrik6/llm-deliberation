@@ -869,7 +869,9 @@ def test_failed_convergence_analysis_offers_retry_and_skip(client, service, fake
 
     detail = client.get(f"/runs/{run_id}")
     body = detail.text
-    assert "Retry failed stage" in body
+    # Stage-specific wording (see the convergence structured-output
+    # reliability pass) -- not the generic "Retry failed stage" label.
+    assert "Retry convergence analysis" in body
     assert "Skip convergence analysis and continue" in body
     # convergence_analysis is not a Gemini-fallback stage -- it must not get
     # the red_team-specific three-button UI.

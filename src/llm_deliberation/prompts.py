@@ -358,6 +358,11 @@ Rules:
   Only the final conclusions belong in the output.
 - This question may not be a binary decision -- use "position" and
   "conclusion" language that fits whatever kind of question it is.
+- Keep every textual field concise: one or two sentences, not a paragraph.
+  Summarize positions in your own words rather than quoting or reproducing
+  the source analyses/critiques/revisions above -- the reader already has
+  those in full elsewhere. Include only decision-relevant items; do not pad
+  a category with minor or borderline entries just to fill it out.
 - Respond with a single JSON object matching this schema exactly, and
   nothing else -- no markdown code fence, no commentary before or after it:
 

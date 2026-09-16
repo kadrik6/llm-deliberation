@@ -12,13 +12,24 @@ the analyst is the same kind of model as every other stage, prompted for a
 narrower task, and can misdetect a change or mis-attribute a cause. Nothing
 here should be read as proof of causality.
 
-Structured output is obtained without any provider-specific structured-
-output/tool-calling API: the prompt asks for one bare JSON object matching
-`ConvergenceAnalysis.model_json_schema()` (embedded in the prompt so it can't
-drift out of sync with this file), and `parse_convergence_analysis` parses +
-validates whatever text the model returned. A response that doesn't parse or
-doesn't match the schema fails the stage, exactly like any other provider
-error -- retryable, not silently accepted as malformed data.
+This module defines the canonical, provider-independent schema/parsing
+contract -- it knows nothing about Anthropic, OpenAI, or Gemini. For a
+provider that supports native structured output (see
+providers.AnthropicProvider's `response_schema` param and
+orchestrator._build_convergence_provider), the provider's own constrained
+decoding is the primary reliability guarantee: the model is restricted to
+emitting text that already matches `ConvergenceAnalysis.model_json_schema()`,
+so `parse_convergence_analysis` below is validating an already-constrained
+response rather than being the *only* thing standing between free-form prose
+and a broken artifact. For a provider without that support, the prompt still
+asks for one bare JSON object matching the schema (`schema_for_prompt()`,
+embedded in the prompt so it can't drift out of sync with this file), and
+`parse_convergence_analysis` remains the sole validation boundary -- exactly
+as before. Either way, a response that doesn't parse or doesn't match the
+schema fails the stage, exactly like any other provider error -- never
+silently accepted as malformed data, and never automatically retried with
+another paid call just to "try JSON again" (see docs/decisions for the
+reliability-pass reasoning this iteration adds to).
 """
 
 from __future__ import annotations
@@ -135,8 +146,36 @@ class ConvergenceAnalysis(BaseModel):
     human_judgement_required: list[HumanJudgementItem] = Field(default_factory=list)
 
 
+# A raw malformed response can be tens of thousands of characters (a real
+# incident hit "Unterminated string starting at line 1 column 14896"). The
+# full text is never dropped silently, but it also must never be dumped
+# whole into the main UI or an unbounded DB column -- see the task brief's
+# "do not expose giant raw JSON/parser stack traces in the main UI". This
+# excerpt length is generous enough to actually diagnose where generation
+# went wrong (see orchestrator._finalize_convergence_response, which stores
+# it in the stage's attempt_log as technical provenance) without storing an
+# unbounded blob.
+RAW_TEXT_EXCERPT_CHARS = 2000
+
+
+def _excerpt(text: str, limit: int = RAW_TEXT_EXCERPT_CHARS) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"... [truncated, {len(text)} chars total]"
+
+
 class ConvergenceParseError(ValueError):
-    """A convergence-analysis response wasn't valid JSON matching the schema."""
+    """A convergence-analysis response wasn't valid JSON matching the schema.
+
+    Carries a bounded excerpt of the raw text that failed to parse/validate
+    (`raw_text_excerpt`) -- never the model's stored artifact (nothing here
+    is persisted as the stage's successful output), just enough of the
+    actual response for technical/provenance diagnosis. See RAW_TEXT_EXCERPT_CHARS.
+    """
+
+    def __init__(self, message: str, *, raw_text: str = ""):
+        super().__init__(message)
+        self.raw_text_excerpt = _excerpt(raw_text) if raw_text else ""
 
 
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE | re.MULTILINE)
@@ -165,11 +204,15 @@ def parse_convergence_analysis(raw_text: str) -> ConvergenceAnalysis:
     try:
         data = json.loads(candidate_text)
     except json.JSONDecodeError as exc:
-        raise ConvergenceParseError(f"Response was not valid JSON: {exc}") from exc
+        raise ConvergenceParseError(
+            f"Response was not valid JSON: {exc}", raw_text=raw_text
+        ) from exc
     try:
         return ConvergenceAnalysis.model_validate(data)
     except ValidationError as exc:
-        raise ConvergenceParseError(f"Response did not match the expected schema: {exc}") from exc
+        raise ConvergenceParseError(
+            f"Response did not match the expected schema: {exc}", raw_text=raw_text
+        ) from exc
 
 
 def canonical_json(analysis: ConvergenceAnalysis) -> str:

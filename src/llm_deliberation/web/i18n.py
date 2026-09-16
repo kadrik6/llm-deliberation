@@ -204,6 +204,13 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "status_failed": {"en": "failed", "et": "ebaõnnestus"},
     "status_skipped": {"en": "skipped", "et": "vahele jäetud"},
     "retry_failed_stage": {"en": "Retry failed stage", "et": "Proovi uuesti"},
+    # More specific wording for convergence_analysis specifically -- the
+    # only stage that currently reaches the plain (non-fallback-chain)
+    # skippable-retry branch in partials/pipeline.html, so this never
+    # collides with any other stage's retry button.
+    "retry_convergence_analysis": {
+        "en": "Retry convergence analysis", "et": "Proovi konsensuse analüüsi uuesti",
+    },
     "retry_preferred_model": {
         "en": "Retry preferred model", "et": "Proovi eelistatud mudelit uuesti",
     },
@@ -232,6 +239,21 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "skip_note_convergence_analysis": {
         "en": "Skipped after convergence analysis could not complete.",
         "et": "Vahele jäetud, sest konsensuse analüüs ei õnnestunud.",
+    },
+
+    # Shown on the main pipeline view in place of the raw stored parser/
+    # schema error when convergence_analysis fails with
+    # failure_reason="structured_output_invalid" -- see
+    # orchestrator._finalize_convergence_response. The raw technical detail
+    # (a bounded excerpt of the actual malformed response) stays in the
+    # stage's attempt_log provenance, never shown here.
+    "convergence_structured_output_invalid_message": {
+        "en": "Convergence analysis could not produce a valid structured result.",
+        "et": "Konsensuse analüüs ei suutnud luua korrektset struktureeritud tulemust.",
+    },
+    "convergence_prior_work_preserved": {
+        "en": "Your completed analyses and revisions are preserved.",
+        "et": "Sinu valminud analüüsid ja täiendused on säilinud.",
     },
 
     # -- fallback/provenance labels (backward-compat display; see

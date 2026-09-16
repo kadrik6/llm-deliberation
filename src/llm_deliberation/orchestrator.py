@@ -174,6 +174,7 @@ def _build_convergence_provider(settings: Settings) -> Provider:
             effort=settings.anthropic_effort,
             timeout_seconds=settings.provider_timeout_seconds,
             max_retries=settings.provider_max_retries,
+            response_schema=_anthropic_convergence_schema(),
         )
     if settings.convergence_provider == "gemini":
         return GeminiFallbackProvider(
@@ -185,6 +186,22 @@ def _build_convergence_provider(settings: Settings) -> Provider:
             min_request_timeout_seconds=settings.gemini_min_request_timeout_seconds,
         )
     raise ValueError(f"Unknown convergence_provider: {settings.convergence_provider!r}")
+
+
+def _anthropic_convergence_schema() -> dict[str, object]:
+    """The convergence_analysis Pydantic schema, translated into the shape
+    Anthropic's native structured-output API expects -- see
+    providers.AnthropicProvider's `response_schema` param. This is the one
+    place the provider-independent `convergence.ConvergenceAnalysis` domain
+    model gets translated into Anthropic-specific request plumbing (see
+    convergence.py's module docstring); the domain model itself never
+    imports or knows about the `anthropic` package. Pure/local schema
+    conversion -- no network call, computed once per orchestrator/provider
+    construction, not per request.
+    """
+    import anthropic
+
+    return anthropic.transform_schema(convergence.ConvergenceAnalysis)
 
 
 def _finalize_convergence_response(response: ModelResponse) -> ModelResponse:
@@ -199,15 +216,43 @@ def _finalize_convergence_response(response: ModelResponse) -> ModelResponse:
     carries no cost/model provenance (parse_convergence_analysis only ever
     sees raw text, never the ModelResponse), and service.py only persists
     cost/provenance from a failed stage for exception types it recognizes.
+
+    Callers must never invoke this when `response.incomplete_reason` is
+    already set (see run_stage, which only calls this once truncation has
+    been ruled out) -- attempting to JSON-parse a response already known to
+    be truncated would misclassify a plain output_truncated failure as
+    structured_output_invalid, hiding the real cause.
     """
     try:
         analysis = convergence.parse_convergence_analysis(response.text)
     except convergence.ConvergenceParseError as exc:
         raise ProviderGenerationError(
+            # The top-level message stays short/technical-but-not-huge (a
+            # parser exception's own str(), which names the failure
+            # location but not the surrounding text) -- see web/i18n.py's
+            # convergence_structured_output_invalid_message for the actual
+            # user-facing wording shown in the main UI instead of this.
             f"convergence_analysis response failed validation: {exc}",
             requested_model=response.requested_model or response.model,
             attempts=1,
-            attempt_log=[],
+            # A bounded excerpt of the actual raw response that failed to
+            # parse/validate -- technical provenance only (never rendered
+            # as the primary error; see partials/pipeline.html), but no
+            # longer silently lost the way it was before this fix (see
+            # convergence.ConvergenceParseError.raw_text_excerpt /
+            # RAW_TEXT_EXCERPT_CHARS).
+            attempt_log=[
+                {
+                    "model": response.model,
+                    "attempt_number": 1,
+                    "outcome": "failed",
+                    "delay_before_seconds": 0.0,
+                    "http_code": None,
+                    "error": exc.raw_text_excerpt or None,
+                    "reason": "response did not match the expected schema",
+                    "estimated_cost_usd": response.estimated_cost_usd,
+                }
+            ],
             fallback_used=False,
             fallback_reason=None,
             estimated_cost_usd=response.estimated_cost_usd,
@@ -436,6 +481,16 @@ class DeliberationOrchestrator:
             ]
             response.estimated_cost_usd += sunk_cost
 
-        if stage == "convergence_analysis":
+        # Only ever attempt to parse/validate a response that is not itself
+        # already known to be incomplete -- a response still truncated even
+        # after the one bounded recovery retry above (or truncated but not
+        # eligible for recovery, e.g. GeminiFallbackProvider, which absorbs
+        # its own truncation handling) must surface as output_truncated,
+        # never be fed to the JSON parser and misclassified as
+        # structured_output_invalid. This was a real bug: previously this
+        # call happened unconditionally, so a still-truncated recovery
+        # attempt's partial JSON was parsed anyway and reported as a schema
+        # validation failure instead of the truncation it actually was.
+        if stage == "convergence_analysis" and response.incomplete_reason is None:
             response = _finalize_convergence_response(response)
         return response

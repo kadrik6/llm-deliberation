@@ -58,6 +58,15 @@
               {% else %}{{ "gemini_timeout_general_message"|t }}
               {% endif %}
             </span>
+          {% elif row.failure_reason == "structured_output_invalid" %}
+            {# Product-level message, not the raw JSON-parser/schema-validation
+               error -- see orchestrator._finalize_convergence_response and
+               web/i18n.py's convergence_structured_output_invalid_message. A
+               bounded excerpt of the actual raw response remains available
+               as technical provenance in the attempt below (stored, not
+               rendered here), never deleted. #}
+            <span class="stage-error">{{ "convergence_structured_output_invalid_message"|t }}</span>
+            <p class="hint">{{ "convergence_prior_work_preserved"|t }}</p>
           {% else %}
             <span class="stage-error">{{ row.error }}</span>
           {% endif %}
@@ -118,8 +127,12 @@
               <button type="submit">{{ row.skip_label_key|t }}</button>
             </form>
           {% elif row.skippable %}
+            {# convergence_analysis is currently the only stage that reaches
+               this plain (non-fallback-chain) skippable-retry branch -- see
+               presenter.SKIPPABLE_STAGE_NAMES -- so a stage-specific retry
+               label is safe here without affecting any other stage. #}
             <form method="post" action="/runs/{{ run_id }}/stages/{{ row.name }}/retry" class="inline-form">
-              <button type="submit">{{ "retry_failed_stage"|t }}</button>
+              <button type="submit">{{ ("retry_convergence_analysis" if row.name == "convergence_analysis" else "retry_failed_stage")|t }}</button>
             </form>
             <form method="post" action="/runs/{{ run_id }}/stages/{{ row.name }}/skip" class="inline-form">
               <button type="submit">{{ row.skip_label_key|t }}</button>
