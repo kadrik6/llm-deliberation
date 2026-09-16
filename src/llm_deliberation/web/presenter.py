@@ -335,6 +335,33 @@ def attempt_log_phases(attempt_log: list[dict] | None) -> list[dict] | None:
     return attempt_log
 
 
+def gemini_budget_timeout_model(stage: StageRecord) -> str | None:
+    """A human-readable model name (e.g. "Gemini 3.8 Flash") for the
+    main pipeline view's friendly red-team timeout message, or None when
+    the generic (no-specific-model) wording should be used instead -- see
+    web/i18n.py's gemini_timeout_specific_suffix / gemini_timeout_general_message.
+
+    Only returns a name when this stage's failure_reason is actually
+    "red_team_budget_exhausted" AND its attempt_log contains at least one
+    "not_attempted" entry (i.e. the fallback chain genuinely did not get to
+    finish, not just "everything failed within budget") -- see
+    providers.GeminiFallbackProvider.generate. The name is a plain,
+    deterministic transform of the configured model id
+    ("gemini-3.8-flash" -> "Gemini 3.8 Flash"), not a lookup table that
+    could drift out of sync with the actual configured models.
+    """
+    if stage.failure_reason != "red_team_budget_exhausted":
+        return None
+    if not stage.attempt_log:
+        return None
+    if not any(a.get("outcome") == "not_attempted" for a in stage.attempt_log):
+        return None
+    model_id = stage.requested_model or stage.model
+    if not model_id:
+        return None
+    return model_id.replace("-", " ").title()
+
+
 def build_pipeline(record: RunRecord) -> list[dict]:
     """Group a run's stages for display, matching STAGE_GROUPS order.
 
@@ -377,6 +404,7 @@ def build_pipeline(record: RunRecord) -> list[dict]:
                     "model_attempts": stage.model_attempts,
                     "attempt_log": stage.attempt_log,
                     "failure_reason": stage.failure_reason,
+                    "budget_timeout_model": gemini_budget_timeout_model(stage),
                     "attempts_by_model": group_attempts_by_model(stage.attempt_log),
                     "attempt_phases": attempt_log_phases(stage.attempt_log),
                     "running_elapsed": running_elapsed,

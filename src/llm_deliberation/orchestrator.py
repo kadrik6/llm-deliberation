@@ -182,6 +182,7 @@ def _build_convergence_provider(settings: Settings) -> Provider:
             thinking_level=settings.gemini_thinking_level,
             timeout_seconds=settings.provider_timeout_seconds,
             max_retries=settings.provider_max_retries,
+            min_request_timeout_seconds=settings.gemini_min_request_timeout_seconds,
         )
     raise ValueError(f"Unknown convergence_provider: {settings.convergence_provider!r}")
 
@@ -247,6 +248,7 @@ class DeliberationOrchestrator:
             thinking_level=settings.gemini_thinking_level,
             timeout_seconds=settings.provider_timeout_seconds,
             max_retries=settings.provider_max_retries,
+            min_request_timeout_seconds=settings.gemini_min_request_timeout_seconds,
         )
         self.convergence = _build_convergence_provider(settings)
 

@@ -236,7 +236,9 @@ class GeminiProvider(Provider):
         )
         self.thinking_level = thinking_level
 
-    def generate(self, *, system: str, prompt: str) -> ModelResponse:
+    def generate(
+        self, *, system: str, prompt: str, timeout_seconds: float | None = None
+    ) -> ModelResponse:
         from google import genai
 
         # v1 is GA; store=False avoids retaining the Interaction object
@@ -249,11 +251,18 @@ class GeminiProvider(Provider):
         # even if the SDK's default ever changes. timeout is in milliseconds
         # per this SDK's HttpOptions -- unset by default (no bound at all);
         # explicit here for the same reason as OpenAI/AnthropicProvider.
+        #
+        # `timeout_seconds`, when given, overrides self.timeout_seconds for
+        # this one call only -- used by GeminiFallbackProvider to cap an
+        # individual attempt by whatever red-team wall-clock budget actually
+        # remains (see its module docstring), never by widening the
+        # configured ceiling.
+        effective_timeout = timeout_seconds if timeout_seconds is not None else self.timeout_seconds
         client = genai.Client(
             http_options={
                 "api_version": "v1",
                 "retry_options": {"attempts": 1},
-                "timeout": int(self.timeout_seconds * 1000),
+                "timeout": int(effective_timeout * 1000),
             }
         )
         interaction = client.interactions.create(
@@ -499,28 +508,64 @@ def classify_gemini_readiness_error(exc: BaseException) -> tuple[str, str]:
 def classify_gemini_error(exc: BaseException) -> tuple[bool, str]:
     """Classify a Gemini SDK exception as transient (fallback-eligible) or not.
 
-    Returns (is_transient, human_reason).
+    Returns (is_transient, human_reason) -- `human_reason` is a short,
+    UI-safe classification label, never the raw exception text (that stays
+    available separately, in the per-attempt provenance's own `error`
+    field -- see GeminiFallbackProvider.generate).
 
-    - google.genai.errors.ClientError (HTTP 4xx: bad/missing API key,
-      billing, invalid request, unsupported parameters, malformed prompt)
-      is a deterministic configuration problem. Never transient -- retrying
-      or falling back would hide a real misconfiguration.
-    - google.genai.errors.ServerError (HTTP 5xx: 500/502/503/504 and other
-      server-side statuses) is provider-side and transient by definition.
-    - Anything else (e.g. a network-level timeout that never became an HTTP
-      response) is treated as transient too: it is not evidence of a
-      deterministic client-side problem, so refusing to retry would just
-      surface confusing infrastructure noise as if it were a config error.
+    IMPORTANT: `client.interactions.create(...)` (what GeminiProvider.generate
+    actually calls) does NOT raise `google.genai.errors.ClientError`/
+    `ServerError` -- those are raised by the SDK's older `models.*` surface
+    (see readiness.classify_gemini_readiness_error, which correctly targets
+    that hierarchy for `models.get`). Empirically confirmed against the
+    installed google-genai 2.23.0: an unreachable-timeout call and an
+    invalid-API-key call both raised types from the internal
+    `google.genai._gaos.lib.compat_errors` module instead
+    (`APITimeoutError`, `BadRequestError`), whose message text is written
+    for a human developer reading SDK docs (e.g. APITimeoutError: "Request
+    timed out... You can increase the timeout by setting the `timeout`
+    argument...") -- never meant to reach an end user. Checking the wrong
+    hierarchy meant every real generation failure fell through to the
+    generic branch below: always "transient" (even genuine auth/billing
+    failures) and always carrying that raw guidance text into `reason`,
+    which is what the main pipeline view displays.
+
+    - `_gaos...APIStatusError` subclasses other than RateLimitError (400
+      bad request, 401 auth, 403 permission, 404 not found, 409 conflict,
+      422 unprocessable) are deterministic configuration/request problems.
+      Never transient -- retrying or falling back would hide a real
+      misconfiguration.
+    - `_gaos...RateLimitError` (429) is treated as transient: rate-limiting
+      is inherently a "try again shortly" condition, consistent with how
+      this project already treats OpenAI/Anthropic rate limits elsewhere
+      (see providers.classify_openai_readiness_error /
+      classify_anthropic_readiness_error) -- a deliberate, disclosed
+      choice, not a preservation of the previous (untested-in-practice,
+      wrong-hierarchy) "429 = never transient" behavior.
+    - `_gaos...InternalServerError` (5xx) and any other `APIConnectionError`
+      (including `APITimeoutError`, a client-side timeout) are provider-
+      side/transport-level and transient.
+    - Anything else not from this hierarchy at all (e.g. a raw network
+      exception that never became a typed SDK error) is treated as
+      transient too: not evidence of a deterministic client-side problem,
+      so refusing to retry would just surface confusing infrastructure
+      noise as if it were a config error.
     """
-    from google.genai import errors as genai_errors
+    from google.genai._gaos.lib import compat_errors as gaos_errors
 
-    if isinstance(exc, genai_errors.ClientError):
-        return False, str(exc)
-    if isinstance(exc, genai_errors.ServerError):
-        code = getattr(exc, "code", "unknown")
-        message = (getattr(exc, "message", None) or "").strip() or "no message"
-        return True, f"HTTP {code} from Gemini ({message})"
-    return True, f"unexpected error contacting Gemini: {exc}"
+    if isinstance(exc, gaos_errors.APITimeoutError):
+        return True, "Gemini request timed out."
+    if isinstance(exc, gaos_errors.RateLimitError):
+        return True, "Gemini is currently rate-limiting this API key."
+    if isinstance(exc, gaos_errors.InternalServerError):
+        code = getattr(exc, "status_code", "5xx")
+        return True, f"HTTP {code} from Gemini (server-side, transient)."
+    if isinstance(exc, gaos_errors.APIConnectionError):
+        return True, "Network error contacting Gemini."
+    if isinstance(exc, gaos_errors.APIStatusError):
+        code = getattr(exc, "status_code", "4xx")
+        return False, f"Gemini rejected the request (HTTP {code})."
+    return True, "Unexpected error contacting Gemini."
 
 
 def _cost_of_failed_attempt(exc: BaseException, model: str) -> float:
@@ -532,7 +577,11 @@ def _cost_of_failed_attempt(exc: BaseException, model: str) -> float:
     usage (e.g. billed input tokens on a request that failed mid-generation),
     it is added to the stage's cost rather than silently dropped, per this
     project's auditability requirements. Returns 0.0 whenever no usage
-    metadata is present, which is the common case today.
+    metadata is present, which is the common case today -- true for both
+    the legacy `google.genai.errors` shape this was originally written
+    against and the actual `_gaos.lib.compat_errors` shape
+    `interactions.create()` raises (neither exposes a `.details` dict with
+    `usageMetadata` in practice; `getattr` below returns 0.0 for either).
     """
     details = getattr(exc, "details", None)
     if not isinstance(details, dict):
@@ -551,7 +600,14 @@ def _cost_of_failed_attempt(exc: BaseException, model: str) -> float:
 class _Attempt:
     model: str
     attempt_number: int
-    outcome: str  # "succeeded" | "failed"
+    # "succeeded" | "failed" | "not_attempted" -- the last one records a
+    # model the fallback-aware wall-clock allocation decided NOT to call at
+    # all (see GeminiFallbackProvider.generate's per-model budget split):
+    # truthful provenance for a model that never got a chance, distinct
+    # from one that was tried and failed. attempt_number is 0 for a
+    # not_attempted entry (it is not part of the real attempt sequence);
+    # estimated_cost_usd is always 0.0 for one (no call was ever made).
+    outcome: str
     delay_before_seconds: float = 0.0
     http_code: int | None = None
     error: str | None = None
@@ -563,6 +619,17 @@ class _Attempt:
 
 
 DEFAULT_GEMINI_RETRY_DELAYS: tuple[float, ...] = (2.0, 5.0, 10.0)
+
+# The smallest per-attempt timeout considered worth actually sending a
+# request with. Below this, a request is effectively doomed before it
+# starts (no realistic chance of a complete response), so the fallback-aware
+# allocation policy (see GeminiFallbackProvider.generate) skips straight to
+# the next model instead of spending remaining wall-clock budget on a call
+# very unlikely to succeed. 15s is short enough to rarely cost meaningful
+# budget when skipped, long enough that a request which *does* get this much
+# time still has a realistic chance to complete for an ordinary (non-stuck)
+# call.
+DEFAULT_GEMINI_MIN_REQUEST_TIMEOUT_SECONDS: float = 15.0
 
 # Wall-clock ceiling for the *whole* chain attempt (every model, every retry),
 # not just a per-model retry-count bound. A real run observed 2+ hours end to
@@ -589,13 +656,34 @@ class GeminiFallbackProvider(Provider):
 
     Tries `models[0]` (the operator's preferred/newest model) first, with a
     small bounded retry-with-backoff policy applied to *each* model in the
-    chain before moving to the next one. Only HTTP 5xx / provider-side
+    chain before moving to the next one. Only transient/provider-side
     failures (see `classify_gemini_error`) trigger a retry or fallback --
     auth, billing, and other deterministic 4xx client errors raise
     immediately with no fallback, so real configuration problems are never
     hidden. The retry budget is bounded (a handful of attempts per model,
     exponential backoff with jitter), so a fully-down provider fails within
     a predictable amount of time rather than looping forever.
+
+    **Fallback-aware timeout allocation.** `deadline_seconds` bounds the
+    *whole* chain attempt; `timeout_seconds` bounds a single HTTP attempt.
+    Naively applying `timeout_seconds` to every attempt regardless of how
+    much of `deadline_seconds` remains lets one model's retries alone
+    consume the entire budget before a later model ever gets a chance (the
+    real incident this policy fixes: two ~180s timeouts on the preferred
+    model alone consumed a 300s budget, leaving 0s/0 attempts for either
+    configured fallback). Instead, at the start of each model's turn the
+    *remaining* wall-clock budget is split evenly across that model and
+    every model still to come (`remaining_total / remaining_model_count`),
+    so an earlier model's retries structurally cannot exhaust the whole
+    budget; and before every individual attempt (initial or retry),
+    `effective_timeout = min(timeout_seconds, remaining_total_budget,
+    remaining_model_budget)` -- always capped by whichever is smallest.
+    When `effective_timeout` would fall below `min_request_timeout_seconds`,
+    the request is not sent at all (a doomed attempt would waste the little
+    remaining budget on a near-certain failure); if that model had zero
+    real attempts by that point, a `"not_attempted"` provenance entry
+    records it truthfully instead of looking like a failure (see
+    `_Attempt`).
 
     `mode="chain"` (default) walks the whole configured chain.
     `mode="preferred_only"` tries only `models[0]`, still with its own
@@ -619,6 +707,7 @@ class GeminiFallbackProvider(Provider):
         clock_fn: Callable[[], float] = time.monotonic,
         timeout_seconds: float = DEFAULT_PROVIDER_TIMEOUT_SECONDS,
         max_retries: int = DEFAULT_PROVIDER_MAX_RETRIES,
+        min_request_timeout_seconds: float = DEFAULT_GEMINI_MIN_REQUEST_TIMEOUT_SECONDS,
     ):
         if not models:
             raise ValueError("GeminiFallbackProvider requires at least one model")
@@ -631,6 +720,7 @@ class GeminiFallbackProvider(Provider):
         self._sleep = sleep_fn
         self._jitter = jitter_fn
         self.deadline_seconds = deadline_seconds
+        self.min_request_timeout_seconds = min_request_timeout_seconds
         self._clock = clock_fn
         factory = provider_factory or (
             lambda m: GeminiProvider(
@@ -662,31 +752,74 @@ class GeminiFallbackProvider(Provider):
         prompt_chars = len(system) + len(prompt)
 
         attempt_log: list[_Attempt] = []
+        real_attempt_count = 0  # real provider calls only -- never counts a
+        # "not_attempted" placeholder entry, so UI/provenance "attempts made"
+        # always reflects actual paid calls, not budget bookkeeping.
         failed_cost = 0.0
         last_reason: str | None = None
         last_incomplete_reason: str | None = None
+        budget_exhausted = False  # set once any model is skipped/cut short
+        # for lack of remaining wall-clock time -- selects the final raise's
+        # message/typed reason (see Section 6/7 of the timeout-fallback fix).
         start = self._clock()
 
-        def deadline_exceeded() -> bool:
-            return (self._clock() - start) >= self.deadline_seconds
+        def elapsed() -> float:
+            return self._clock() - start
 
-        for model in chain:
+        def not_attempted(model: str) -> None:
+            attempt_log.append(
+                _Attempt(
+                    model=model,
+                    attempt_number=0,
+                    outcome="not_attempted",
+                    reason="red-team time budget exhausted",
+                )
+            )
+
+        for chain_index, model in enumerate(chain):
+            remaining_total = self.deadline_seconds - elapsed()
+            if remaining_total <= 0:
+                # Global deadline already gone before this model's turn --
+                # every model from here on gets an honest "never attempted"
+                # record instead of silently vanishing from the provenance.
+                budget_exhausted = True
+                for skipped_model in chain[chain_index:]:
+                    not_attempted(skipped_model)
+                break
+
+            remaining_models = len(chain) - chain_index
+            model_budget = remaining_total / remaining_models
+            # Absolute "elapsed" time (same clock basis as `elapsed()`) this
+            # model's own attempts must stop by -- an equal share of
+            # whatever remains, dynamically recomputed each model's turn so
+            # a model that finishes quickly (few/fast attempts) leaves more
+            # for the ones after it, and one that eats its whole share still
+            # cannot touch what was reserved for the rest of the chain.
+            model_deadline = elapsed() + model_budget
+
             provider = self._providers[model]
+            model_attempted = False
             for retry_index in range(len(self.retry_delays) + 1):
-                if deadline_exceeded():
-                    raise ProviderGenerationError(
-                        f"Gemini red-team wall-clock budget of {self.deadline_seconds:.0f}s "
-                        f"was exceeded before all attempts/models were tried "
-                        f"({len(attempt_log)} attempt(s) so far).",
-                        requested_model=self.models[0],
-                        attempts=len(attempt_log),
-                        attempt_log=[a.to_dict() for a in attempt_log],
-                        fallback_used=len(attempt_log) > 0
-                        and attempt_log[-1].model != self.models[0],
-                        fallback_reason=last_reason,
-                        estimated_cost_usd=failed_cost,
-                        reason=last_incomplete_reason or "provider_error",
-                    )
+                delay_before = 0.0
+                if retry_index > 0:
+                    delay_before = self._jittered_delay(self.retry_delays[retry_index - 1])
+
+                current_elapsed = elapsed()
+                remaining_total_now = self.deadline_seconds - current_elapsed - delay_before
+                remaining_model_now = model_deadline - current_elapsed - delay_before
+                effective_timeout = min(
+                    self.timeout_seconds, remaining_total_now, remaining_model_now
+                )
+
+                if effective_timeout < self.min_request_timeout_seconds:
+                    # Not enough time left (globally, or in this model's own
+                    # allocation) for a request with any realistic chance of
+                    # completing -- skip straight to the next model rather
+                    # than spend the little that remains on a doomed call.
+                    budget_exhausted = True
+                    if not model_attempted:
+                        not_attempted(model)
+                    break
 
                 if budget_guard is not None:
                     # Every retry and every fallback-chain model switch is
@@ -697,7 +830,9 @@ class GeminiFallbackProvider(Provider):
                     # model here is deliberate, not reused from the chain's
                     # first entry). See cost_budget.py / Section 9 of the
                     # task brief: automatic retries must never bypass the
-                    # user's cost guard.
+                    # user's cost guard. Checked *after* the wall-clock
+                    # feasibility check above: an attempt already ruled out
+                    # by time has no reason to also compute a cost estimate.
                     estimated_next = estimate_max_call_cost_usd(
                         model, prompt_chars=prompt_chars, max_output_tokens=self.max_output_tokens
                     )
@@ -707,22 +842,24 @@ class GeminiFallbackProvider(Provider):
                         raise budget_exceeded_to_provider_error(
                             budget_exc,
                             requested_model=self.models[0],
-                            attempts=len(attempt_log),
+                            attempts=real_attempt_count,
                             attempt_log=[a.to_dict() for a in attempt_log],
-                            fallback_used=len(attempt_log) > 0
+                            fallback_used=real_attempt_count > 0
                             and attempt_log[-1].model != self.models[0],
                             fallback_reason=last_reason,
                             sunk_cost_usd=failed_cost,
                         ) from budget_exc
 
-                delay_before = 0.0
-                if retry_index > 0:
-                    delay_before = self._jittered_delay(self.retry_delays[retry_index - 1])
+                if delay_before:
                     self._sleep(delay_before)
 
-                attempt_number = len(attempt_log) + 1
+                model_attempted = True
+                real_attempt_count += 1
+                attempt_number = real_attempt_count
                 try:
-                    response = provider.generate(system=system, prompt=prompt)
+                    response = provider.generate(
+                        system=system, prompt=prompt, timeout_seconds=effective_timeout
+                    )
                 except Exception as exc:
                     is_transient, reason = classify_gemini_error(exc)
                     attempt_cost = _cost_of_failed_attempt(exc, model)
@@ -742,7 +879,7 @@ class GeminiFallbackProvider(Provider):
                             attempt_number=attempt_number,
                             outcome="failed",
                             delay_before_seconds=round(delay_before, 3),
-                            http_code=getattr(exc, "code", None),
+                            http_code=getattr(exc, "status_code", None) or getattr(exc, "code", None),
                             error=str(exc),
                             reason=reason,
                             estimated_cost_usd=attempt_cost,
@@ -751,7 +888,7 @@ class GeminiFallbackProvider(Provider):
                     if not is_transient:
                         raise ProviderGenerationError(
                             f"Gemini generation failed for model '{model}' with a "
-                            f"non-transient error (no retry, no fallback attempted): {exc}",
+                            f"non-transient error (no retry, no fallback attempted): {reason}",
                             requested_model=self.models[0],
                             attempts=attempt_number,
                             attempt_log=[a.to_dict() for a in attempt_log],
@@ -807,10 +944,26 @@ class GeminiFallbackProvider(Provider):
                     response.estimated_cost_usd = failed_cost + response.estimated_cost_usd
                     return response
 
+        if budget_exhausted:
+            raise ProviderGenerationError(
+                f"Gemini red-team wall-clock budget of {self.deadline_seconds:.0f}s was "
+                f"exhausted before the fallback chain could complete "
+                f"({real_attempt_count} real attempt(s) made across "
+                f"{sum(1 for a in attempt_log if a.outcome != 'not_attempted')} logged, "
+                f"{sum(1 for a in attempt_log if a.outcome == 'not_attempted')} model(s) "
+                f"never attempted).",
+                requested_model=self.models[0],
+                attempts=real_attempt_count,
+                attempt_log=[a.to_dict() for a in attempt_log],
+                fallback_used=real_attempt_count > 0 and len(chain) > 1,
+                fallback_reason=last_reason,
+                estimated_cost_usd=failed_cost,
+                reason="red_team_budget_exhausted",
+            )
         raise ProviderGenerationError(
             f"All configured Gemini models failed transiently: {', '.join(chain)}.",
             requested_model=self.models[0],
-            attempts=len(attempt_log),
+            attempts=real_attempt_count,
             attempt_log=[a.to_dict() for a in attempt_log],
             fallback_used=len(chain) > 1,
             fallback_reason=last_reason,

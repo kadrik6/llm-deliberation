@@ -30,9 +30,13 @@
             {% for g in row.attempts_by_model %}
               {% if not loop.first %}<div class="fallback-indicator">{{ "fallback_indicator"|t }}</div>{% endif %}
               <div class="fallback-attempt-group">
+                {% if g.outcome == "not_attempted" %}
+                <code>{{ g.model }}</code> · {{ "attempt_outcome_not_attempted"|t }}{% if g.reason %}: {{ g.reason }}{% endif %}
+                {% else %}
                 <code>{{ g.model }}</code> · {{ g.count|count_label("attempt") }} ·
                 {% if g.outcome == "succeeded" %}{{ "status_succeeded"|t }}
                 {% else %}{{ "status_failed"|t }}{% if g.reason %}: {{ g.reason }}{% endif %}
+                {% endif %}
                 {% endif %}
               </div>
             {% endfor %}
@@ -44,7 +48,19 @@
           </span>
           {% endif %}
         {% elif row.status == 'failed' %}
-          <span class="stage-error">{{ row.error }}</span>
+          {% if row.failure_reason == "red_team_budget_exhausted" %}
+            {# Product-level message, not the raw stored SDK/technical
+               error -- see providers.classify_gemini_error's docstring and
+               web/i18n.py's gemini_timeout_* keys. The raw text remains
+               available per-attempt below, in row.attempts_by_model. #}
+            <span class="stage-error">
+              {% if row.budget_timeout_model %}{{ row.budget_timeout_model }} {{ "gemini_timeout_specific_suffix"|t }}
+              {% else %}{{ "gemini_timeout_general_message"|t }}
+              {% endif %}
+            </span>
+          {% else %}
+            <span class="stage-error">{{ row.error }}</span>
+          {% endif %}
           {% if row.attempt_phases %}
             <div class="stage-fallback-note">
               {% for entry in row.attempt_phases %}
@@ -61,9 +77,13 @@
               {% for g in row.attempts_by_model %}
                 {% if not loop.first %}<div class="fallback-indicator">{{ "fallback_indicator"|t }}</div>{% endif %}
                 <div class="fallback-attempt-group">
+                  {% if g.outcome == "not_attempted" %}
+                  <code>{{ g.model }}</code> · {{ "attempt_outcome_not_attempted"|t }}{% if g.reason %}: {{ g.reason }}{% endif %}
+                  {% else %}
                   <code>{{ g.model }}</code> · {{ g.count|count_label("attempt") }} ·
                   {% if g.outcome == "succeeded" %}{{ "status_succeeded"|t }}
                   {% else %}{{ "status_failed"|t }}{% if g.reason %}: {{ g.reason }}{% endif %}
+                  {% endif %}
                   {% endif %}
                 </div>
               {% endfor %}

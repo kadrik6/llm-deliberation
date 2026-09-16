@@ -430,6 +430,31 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "attempt_outcome_succeeded": {"en": "succeeded", "et": "õnnestus"},
     "attempt_outcome_provider_error": {"en": "request failed", "et": "päring ebaõnnestus"},
 
+    # -- red-team fallback-aware timeout policy (providers.py's
+    # GeminiFallbackProvider.generate) -- a model the wall-clock allocation
+    # decided not to call at all gets this label instead of "failed", since
+    # it never actually ran (see the _Attempt "not_attempted" outcome).
+    "attempt_outcome_not_attempted": {"en": "not attempted", "et": "ei proovitud"},
+    # Shown on the main pipeline view in place of the raw stored error when
+    # a red_team stage's failure_reason is "red_team_budget_exhausted" (see
+    # presenter.gemini_budget_timeout_model) -- the raw SDK/technical detail
+    # stays in each attempt's own provenance, never shown here. The specific
+    # variant names the model whose attempts consumed the budget (always
+    # leads the sentence in both languages, so no word-splice is needed);
+    # the general variant is used when no specific model can be identified.
+    "gemini_timeout_specific_suffix": {
+        "en": "timed out before the fallback chain could complete.",
+        "et": "aegus enne, kui kogu varumudelite ahel jõuti läbi proovida.",
+    },
+    "gemini_timeout_general_message": {
+        "en": "Gemini did not respond within the red-team time limit. The "
+              "configured fallback models were tried as far as the "
+              "remaining time allowed.",
+        "et": "Gemini ei vastanud punase meeskonna ajapiiri jooksul. "
+              "Varumudeleid prooviti nii palju, kui allesjäänud aeg "
+              "võimaldas.",
+    },
+
     # -- provider readiness (New Deliberation page) --------------------------
     "readiness_heading": {"en": "Provider readiness", "et": "Teenusepakkujate valmisolek"},
     "check_again_button": {"en": "Check again", "et": "Kontrolli uuesti"},

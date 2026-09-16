@@ -108,9 +108,13 @@
         {% for g in attempt_groups %}
           {% if not loop.first %}<div class="fallback-indicator">{{ "fallback_indicator"|t }}</div>{% endif %}
           <div class="fallback-attempt-group">
+            {% if g.outcome == "not_attempted" %}
+            <code>{{ g.model }}</code> &middot; {{ "attempt_outcome_not_attempted"|t }}{% if g.reason %}: {{ g.reason }}{% endif %}
+            {% else %}
             <code>{{ g.model }}</code> &middot; {{ g.count|count_label("attempt") }} &middot;
             {% if g.outcome == "succeeded" %}{{ "status_succeeded"|t }}
             {% else %}{{ "status_failed"|t }}{% if g.reason %}: {{ g.reason }}{% endif %}
+            {% endif %}
             {% endif %}
           </div>
         {% endfor %}

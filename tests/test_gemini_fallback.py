@@ -1,15 +1,26 @@
-"""Offline tests for the Gemini red-team model fallback chain.
+"""Offline tests for the Gemini red-team model fallback chain, including the
+fallback-aware wall-clock timeout allocation (see providers.py's
+GeminiFallbackProvider.generate docstring for the policy this protects).
 
 No network calls: each fake per-model provider is a plain Python object
-whose .generate() either raises a canned google.genai error or returns a
-canned ModelResponse. Real sleeping is stubbed out via sleep_fn so these
-tests run instantly regardless of the configured backoff delays.
+whose .generate() either raises a canned exception or returns a canned
+ModelResponse. Real sleeping is stubbed out via sleep_fn so these tests run
+instantly regardless of the configured backoff delays.
+
+Exception fixtures use `google.genai._gaos.lib.compat_errors` -- empirically
+confirmed (via two real, free, no-cost calls: an unreachable-timeout request
+and an invalid-API-key request) to be what `client.interactions.create(...)`
+actually raises, as opposed to the unrelated `google.genai.errors` hierarchy
+used by `client.models.get(...)` (see readiness.py). Using the wrong
+hierarchy here would silently test a code path that never executes for the
+red-team stage.
 """
 
 from __future__ import annotations
 
+import httpx
 import pytest
-from google.genai import errors as genai_errors
+from google.genai._gaos.lib import compat_errors as gaos_errors
 
 from llm_deliberation.providers import (
     GeminiFallbackProvider,
@@ -19,12 +30,23 @@ from llm_deliberation.providers import (
 from llm_deliberation.types import ModelResponse, Usage
 
 
-def server_error(code: int = 503, message: str = "model is overloaded") -> genai_errors.ServerError:
-    return genai_errors.ServerError(code, {"message": message, "status": "UNAVAILABLE"}, None)
+def _gaos_response(status_code: int) -> httpx.Response:
+    request = httpx.Request("POST", "https://example.invalid/v1/interactions")
+    return httpx.Response(status_code=status_code, request=request, json={"error": {"message": "test"}})
 
 
-def client_error(code: int = 401, message: str = "invalid API key") -> genai_errors.ClientError:
-    return genai_errors.ClientError(code, {"message": message, "status": "UNAUTHENTICATED"}, None)
+def server_error(code: int = 503, message: str = "model is overloaded") -> gaos_errors.InternalServerError:
+    return gaos_errors.InternalServerError(message, response=_gaos_response(code), body=None)
+
+
+def client_error(code: int = 401, message: str = "invalid API key") -> gaos_errors.APIStatusError:
+    cls = gaos_errors.RateLimitError if code == 429 else gaos_errors.APIStatusError
+    return cls(message, response=_gaos_response(code), body=None)
+
+
+def timeout_error() -> gaos_errors.APITimeoutError:
+    request = httpx.Request("POST", "https://example.invalid/v1/interactions")
+    return gaos_errors.APITimeoutError(request)
 
 
 class FakeSingleModelProvider:
@@ -40,9 +62,11 @@ class FakeSingleModelProvider:
         self.model = model
         self._behaviors = list(behaviors)
         self.calls = 0
+        self.timeouts_seen: list[float | None] = []
 
-    def generate(self, *, system: str, prompt: str) -> ModelResponse:
+    def generate(self, *, system: str, prompt: str, timeout_seconds: float | None = None) -> ModelResponse:
         self.calls += 1
+        self.timeouts_seen.append(timeout_seconds)
         if not self._behaviors:
             raise AssertionError(f"{self.model} called more times than expected")
         behavior = self._behaviors.pop(0)
@@ -85,10 +109,33 @@ def test_classify_server_error_is_transient():
     assert "503" in reason
 
 
-@pytest.mark.parametrize("code", [400, 401, 402, 403, 404, 429])
+@pytest.mark.parametrize("code", [400, 401, 402, 403, 404, 409, 422])
 def test_classify_client_error_is_never_transient(code):
     is_transient, _ = classify_gemini_error(client_error(code, "bad request"))
     assert not is_transient
+
+
+def test_classify_rate_limit_is_transient():
+    # Deliberately distinct from other 4xx: rate-limiting is inherently a
+    # "try again shortly" condition, consistent with how this project
+    # already treats OpenAI/Anthropic rate limits elsewhere -- see
+    # classify_gemini_error's docstring.
+    is_transient, reason = classify_gemini_error(client_error(429, "rate limited"))
+    assert is_transient
+    assert "rate" in reason.lower()
+
+
+def test_classify_timeout_is_transient_and_message_is_clean():
+    is_transient, reason = classify_gemini_error(timeout_error())
+    assert is_transient
+    assert "timed out" in reason.lower()
+    # The raw SDK guidance text ("You can increase the timeout by setting
+    # the `timeout` argument...") must never leak into the classification
+    # reason shown in the main UI -- see Section 6 of the timeout-fallback
+    # fix. It remains available via the exception's own str(), stored
+    # separately in each _Attempt's `error` field (provenance).
+    assert "increase the timeout" not in reason.lower()
+    assert "increase the timeout" in str(timeout_error()).lower()  # still true of the raw exception itself
 
 
 # -- provider fallback behavior ------------------------------------------
@@ -173,7 +220,13 @@ def test_auth_error_raises_immediately_with_no_fallback():
     with pytest.raises(ProviderGenerationError) as excinfo:
         provider.generate(system="sys", prompt="p")
 
-    assert "invalid API key" in str(excinfo.value)
+    # The top-level message is a clean, product-level classification (no
+    # raw SDK text) -- see Section 6 of the timeout-fallback fix.
+    assert "HTTP 401" in str(excinfo.value)
+    assert "invalid API key" not in str(excinfo.value)
+    # The raw exception text is preserved separately, in per-attempt
+    # provenance -- never deleted, just not the primary displayed message.
+    assert "invalid API key" in excinfo.value.attempt_log[0]["error"]
     assert excinfo.value.fallback_used is False
     assert excinfo.value.attempts == 1
     assert fakes["gemini-3.7-flash"].calls == 0  # never even tried
@@ -306,7 +359,7 @@ def test_wall_clock_deadline_stops_the_chain_even_with_retries_remaining():
             self.model = model
             self.calls = 0
 
-        def generate(self, *, system, prompt):
+        def generate(self, *, system, prompt, timeout_seconds=None):
             self.calls += 1
             clock["t"] += 200.0  # each call "takes" 200 wall-clock seconds
             raise server_error(503)

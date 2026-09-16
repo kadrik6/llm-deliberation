@@ -90,6 +90,7 @@ class Settings:
     max_output_tokens: int
     provider_timeout_seconds: float
     provider_max_retries: int
+    gemini_min_request_timeout_seconds: float
 
     @classmethod
     def load(
@@ -174,6 +175,16 @@ class Settings:
             # var for operators who need more headroom.
             provider_timeout_seconds=float(os.getenv("PROVIDER_TIMEOUT_SECONDS", "180")),
             provider_max_retries=int(os.getenv("PROVIDER_MAX_RETRIES", "1")),
+            # The smallest per-attempt timeout GeminiFallbackProvider will
+            # actually send a request with, once the red-team wall-clock
+            # budget (deadline_seconds) or a model's own share of it runs
+            # low -- see providers.DEFAULT_GEMINI_MIN_REQUEST_TIMEOUT_SECONDS
+            # for the full reasoning. Below this, the remaining time is
+            # better spent skipping to the next fallback model than sending
+            # a near-certainly-doomed request.
+            gemini_min_request_timeout_seconds=float(
+                os.getenv("GEMINI_MIN_REQUEST_TIMEOUT_SECONDS", "15")
+            ),
         )
 
     def validate_keys(self) -> None:
