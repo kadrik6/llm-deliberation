@@ -1,0 +1,17 @@
+{
+  "status": "incomplete",
+  "model": "gemini-3.8-flash",
+  "steps": [
+    {
+      "type": "model_output",
+      "content": [
+        {"type": "text", "text": "Sanitized sample output that got cut off mid-sen"}
+      ]
+    }
+  ],
+  "usage": {
+    "total_input_tokens": 300,
+    "total_output_tokens": 5000,
+    "total_thought_tokens": 40
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "status": "completed",
+  "model": "gemini-3.8-flash",
+  "steps": [
+    {
+      "type": "model_output",
+      "content": [
+        {"type": "text", "text": "Sanitized sample red-team output."}
+      ]
+    }
+  ],
+  "usage": {
+    "total_input_tokens": 300,
+    "total_output_tokens": 500,
+    "total_thought_tokens": 40
+  }
+}

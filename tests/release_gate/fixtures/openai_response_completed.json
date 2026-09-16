@@ -1,0 +1,29 @@
+{
+  "id": "resp_fixture_001",
+  "created_at": 1700000000,
+  "model": "gpt-5.6-terra",
+  "object": "response",
+  "status": "completed",
+  "incomplete_details": null,
+  "parallel_tool_calls": false,
+  "tool_choice": "auto",
+  "tools": [],
+  "output": [
+    {
+      "type": "message",
+      "id": "msg_fixture_001",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {"type": "output_text", "text": "Sanitized sample analysis output.", "annotations": []}
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 120,
+    "output_tokens": 340,
+    "total_tokens": 460,
+    "input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0},
+    "output_tokens_details": {"reasoning_tokens": 0}
+  }
+}

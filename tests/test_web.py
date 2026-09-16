@@ -378,6 +378,43 @@ def test_running_stage_shows_elapsed_time_derived_from_started_at(client, servic
     assert len(running_note.findall(fragment.text)) == 1
 
 
+def test_stale_running_stage_shows_disclosure_notice(client, service):
+    """AUDIT_REPORT.md J.3 -- a stage persisted as "running" with nothing
+    actually executing it (simulating a crash/restart mid-call) must be
+    disclosed, not silently offered as an ordinary resume."""
+    run_id = service.create_run("Q?", "economy", red_team_enabled=False)
+    stage = service.repo.get_stage(run_id, "analysis_a")
+    service.repo.mark_stage_running(stage.id)
+
+    detail = client.get(f"/runs/{run_id}")
+    assert "left running from a previous session" in detail.text
+
+    fragment = client.get(f"/runs/{run_id}/status")
+    assert "left running from a previous session" in fragment.text
+
+
+def test_stale_running_notice_absent_while_genuinely_executing(client, service):
+    """The disclosure must not fire for a stage that is genuinely mid-flight
+    in this process right now -- only for one orphaned by a previous process
+    lifetime (see web.app.stale_running_stage)."""
+    run_id = service.create_run("Q?", "economy", red_team_enabled=False)
+    stage = service.repo.get_stage(run_id, "analysis_a")
+    service.repo.mark_stage_running(stage.id)
+
+    client.app.state.running.add(run_id)
+    try:
+        detail = client.get(f"/runs/{run_id}")
+        assert "left running from a previous session" not in detail.text
+    finally:
+        client.app.state.running.discard(run_id)
+
+
+def test_stale_running_notice_absent_with_no_running_stage(client, service):
+    run_id = service.create_run("Q?", "economy", red_team_enabled=False)
+    detail = client.get(f"/runs/{run_id}")
+    assert "left running from a previous session" not in detail.text
+
+
 def test_export_markdown_discloses_fallback(client, service, fake_orchestrator_state):
     fake_orchestrator_state["responses"] = {
         "red_team": {

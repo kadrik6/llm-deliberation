@@ -239,6 +239,18 @@ forwards the port automatically, no extra setup needed. The web UI binds
 to `127.0.0.1` only and has no authentication -- it is built for
 single-user local use. See [`docs/trust-model.md`](docs/trust-model.md).
 
+**Supported deployment: exactly one application worker process.**
+`llm-deliberate-ui` starts a single `uvicorn` process (no `--workers`
+flag), and that is the only supported way to run it. The guard that
+stops a Resume/Retry click from double-executing the same run, and the
+provider-readiness cache, are both plain in-process memory (not shared
+via the database or any external store) -- correct and sufficient for
+one process, but **not safe under multiple worker processes or multiple
+instances** pointed at the same database file: two workers could both
+accept a concurrent Resume/Retry for the same run and execute it twice.
+Do not run this behind `--workers N>1`, a multi-process WSGI/ASGI
+manager, or multiple replicas sharing one `data/deliberation.db`.
+
 ## Profiles
 
 Model selection is presented as a profile, not raw model names, because

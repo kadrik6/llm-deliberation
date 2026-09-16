@@ -212,6 +212,26 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
     templates.env.undefined = jinja2.StrictUndefined
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+    def stale_running_stage(record: RunRecord) -> bool:
+        """True when a stage is persisted as "running" but nothing in this
+        process is actually executing this run right now -- i.e. it was
+        orphaned by a crash/restart while mid-flight (see
+        AUDIT_REPORT.md Section D.1/J.3). `app.state.running` is populated
+        for the whole duration of a genuinely in-flight execution (see
+        reserve()/schedule()), so a "running" stage while the run_id is
+        *not* in that set can only mean a previous process lifetime never
+        got to record this stage's outcome -- never a false positive during
+        a real, currently-executing wave.
+
+        Deliberately does not distinguish *which* stage, or how long it has
+        been orphaned: any such stage means the next Resume click will make
+        a new provider call for it, and that is the one fact that needs
+        disclosing (see pipeline.html's stale_running_notice).
+        """
+        if record.id in app.state.running:
+            return False
+        return any(stage.status == "running" for stage in record.stages)
+
     def render_pipeline_fragment(record: RunRecord, ui_lang: str) -> str:
         groups = build_pipeline(record)
         return templates.get_template("partials/pipeline.html").render(
@@ -226,6 +246,7 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
             # summary without requiring a manual refresh. None while still
             # running, exactly as on a fresh page load.
             quality=compute_deliberation_quality(record),
+            stale_running=stale_running_stage(record),
         )
 
     def reserve(run_id: str) -> bool:
@@ -457,6 +478,10 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
             # verbatim, in full, somewhere on the page; this only decides
             # how much of it is visible by default.
             "preview": input_preview(record),
+            # See stale_running_stage's docstring -- true only when a stage
+            # was orphaned "running" by a previous process lifetime, never
+            # while this run is genuinely executing right now.
+            "stale_running": stale_running_stage(record),
         }
 
         if record.status == "succeeded":

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import random
 import time
 from abc import ABC, abstractmethod
@@ -272,7 +273,17 @@ class GeminiProvider(Provider):
         # remains (see its module docstring), never by widening the
         # configured ceiling.
         effective_timeout = timeout_seconds if timeout_seconds is not None else self.timeout_seconds
+        # api_key is passed explicitly (never left to the SDK's own env
+        # auto-detection) so this call always authenticates with exactly the
+        # credential readiness.check_gemini_readiness() validated. Without
+        # this, google-genai 2.23.0's get_env_api_key() checks GOOGLE_API_KEY
+        # *before* GEMINI_API_KEY -- if an operator happens to have both set
+        # (e.g. a leftover GOOGLE_API_KEY from an unrelated Google Cloud
+        # setup), readiness would report "ready" for the GEMINI_API_KEY
+        # credential while this real, paid call silently used a different
+        # one instead. See AUDIT_REPORT.md, Section C.
         client = genai.Client(
+            api_key=os.getenv("GEMINI_API_KEY"),
             http_options={
                 "api_version": "v1",
                 "retry_options": {"attempts": 1},

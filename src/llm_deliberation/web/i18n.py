@@ -226,6 +226,21 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "et": "Jäta konsensuse analüüs vahele ja jätka",
     },
     "resume_run": {"en": "Resume run", "et": "Jätka käiku"},
+    # Shown above "Resume run" only when a stage is persisted as "running"
+    # but nothing is actually executing it right now -- a previous process
+    # was killed/restarted mid-call (see web/app.py's stale_running_stage,
+    # AUDIT_REPORT.md Section D.1/J.3). Resuming cannot know whether that
+    # original call actually completed; it can only make a new one.
+    "stale_running_notice": {
+        "en": "A stage was left running from a previous session and never "
+              "finished. Resuming will make a new provider call for it, "
+              "which may incur additional cost. All prior completed stages "
+              "are unaffected.",
+        "et": "Üks etapp jäi eelmisest seansist pooleli ega lõppenud. "
+              "Jätkamine teeb selle jaoks uue päringu teenusepakkujale, "
+              "mis võib kaasa tuua lisakulu. Kõik varem valminud etapid "
+              "jäävad muutumatuks.",
+    },
     "starting_label": {"en": "Starting...", "et": "Käivitub..."},
 
     # Shown near a skipped stage's status note (see build_pipeline's

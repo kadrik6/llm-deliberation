@@ -1,0 +1,16 @@
+{
+  "id": "msg_fixture_003",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-5",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "content": [
+    {
+      "type": "text",
+      "citations": null,
+      "text": "{\"convergence\": \"partial\", \"material_changes\": [{\"candidate\": \"A\", \"before\": \"Adopt option 1\", \"after\": \"Adopt option 2 with caveats\", \"change_status\": \"material\", \"triggers\": [{\"source\": \"peer_critique\", \"stage\": \"critique_b_of_a\", \"summary\": \"B raised a cost concern A had not addressed.\"}]}], \"agreements_reached\": [{\"topic\": \"Timeline\", \"shared_position\": \"Both agree a 6-week rollout is feasible.\"}], \"unresolved_disagreements\": [], \"remaining_unknowns\": [], \"human_judgement_required\": []}"
+    }
+  ],
+  "usage": {"input_tokens": 800, "output_tokens": 220}
+}

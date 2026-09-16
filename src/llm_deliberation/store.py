@@ -180,6 +180,15 @@ class Repository:
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
+        # Wait up to 5s for a lock instead of raising "database is locked"
+        # immediately -- protects against a second process/tool briefly
+        # holding the file (e.g. a backup, or a `sqlite3` CLI session) even
+        # though normal application writes never contend with each other
+        # (every stage/run write in service._execute happens sequentially
+        # in one coroutine -- see AUDIT_REPORT.md Section E). Does not
+        # change that serialized write architecture; purely a safety net
+        # for external contention.
+        self._conn.execute("PRAGMA busy_timeout = 5000")
         self._conn.executescript(SCHEMA)
         self._migrate_stage_columns()
         self._migrate_run_columns()

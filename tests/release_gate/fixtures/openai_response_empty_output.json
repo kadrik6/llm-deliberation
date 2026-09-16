@@ -1,0 +1,19 @@
+{
+  "id": "resp_fixture_003",
+  "created_at": 1700000002,
+  "model": "gpt-5.6-terra",
+  "object": "response",
+  "status": "completed",
+  "incomplete_details": null,
+  "parallel_tool_calls": false,
+  "tool_choice": "auto",
+  "tools": [],
+  "output": [],
+  "usage": {
+    "input_tokens": 120,
+    "output_tokens": 0,
+    "total_tokens": 120,
+    "input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0},
+    "output_tokens_details": {"reasoning_tokens": 0}
+  }
+}

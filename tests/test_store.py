@@ -3,6 +3,14 @@ from __future__ import annotations
 from llm_deliberation.store import Repository
 
 
+def test_busy_timeout_pragma_is_set(tmp_path):
+    """AUDIT_REPORT.md J.4 -- the connection must wait for a lock instead of
+    raising "database is locked" immediately on any contention."""
+    repo = Repository(tmp_path / "db.sqlite3")
+    (timeout_ms,) = repo._conn.execute("PRAGMA busy_timeout").fetchone()
+    assert timeout_ms == 5000
+
+
 def test_insert_and_get_run_round_trip(tmp_path):
     repo = Repository(tmp_path / "db.sqlite3")
     repo.insert_run(
