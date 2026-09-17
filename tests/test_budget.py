@@ -240,46 +240,36 @@ def test_required_stage_is_never_silently_skipped_due_to_budget(
     assert record.status == "failed"
 
 
-def test_optional_red_team_blocked_by_budget_is_failed_not_silently_skipped(
+def test_optional_red_team_is_auto_skipped_to_protect_completion_budget(
     service, fake_orchestrator_state
 ):
-    # Every other stage has a negligible upper bound; only red_team's is
-    # deliberately priced above the whole budget, so it -- and only it --
-    # is blocked in its wave (see conftest.FakeOrchestrator.stage_upper_bound_cost).
+    """Completion-reserve follow-up (see cost_budget.
+    estimate_remaining_completion_reserve): red_team's upper bound alone
+    exceeds the whole run budget, so it is auto-skipped -- not failed -- and
+    the run still reaches synthesis normally, since every other stage's
+    (negligible, per FakeOrchestrator's default) cost still fits. This
+    supersedes the old "fails, then needs a manual skip" behavior: the run
+    no longer needs to visibly fail at all for this to resolve cleanly."""
     fake_orchestrator_state["upper_bound_cost_usd"] = {"red_team": Decimal("5.00")}
     run_id = service.create_run(
         "Q?", "economy", red_team_enabled=True, max_run_cost_usd="1.00"
     )
     record = asyncio.run(service.start_run(run_id))
 
-    red_team = next(s for s in record.stages if s.name == "red_team")
-    assert red_team.status == "failed"
-    assert red_team.failure_reason == "run_budget_exceeded"
-    critique_a = next(s for s in record.stages if s.name == "critique_a_of_b")
-    assert critique_a.status == "succeeded"  # unaffected sibling in the same wave
-    assert "red_team" not in fake_orchestrator_state["log"]
-    # Still explicitly skippable afterward -- reuses the existing
-    # SKIPPABLE_STAGE_NAMES / skip_stage() flow, no new mechanism needed.
-    from llm_deliberation.orchestrator import SKIPPABLE_STAGE_NAMES
-
-    assert "red_team" in SKIPPABLE_STAGE_NAMES
-
-
-def test_optional_red_team_can_be_skipped_after_budget_block(
-    service, fake_orchestrator_state
-):
-    fake_orchestrator_state["upper_bound_cost_usd"] = {"red_team": Decimal("5.00")}
-    run_id = service.create_run(
-        "Q?", "economy", red_team_enabled=True, max_run_cost_usd="1.00"
-    )
-    record = asyncio.run(service.start_run(run_id))
-    red_team = next(s for s in record.stages if s.name == "red_team")
-    assert red_team.failure_reason == "run_budget_exceeded"
-
-    record = asyncio.run(service.skip_stage(run_id, red_team.id))
     red_team = next(s for s in record.stages if s.name == "red_team")
     assert red_team.status == "skipped"
+    assert red_team.failure_reason is None  # never a failure -- see the module docstring
+    from llm_deliberation.orchestrator import RED_TEAM_COMPLETION_RESERVE_SKIP_REASON
+
+    assert red_team.fallback_reason == RED_TEAM_COMPLETION_RESERVE_SKIP_REASON
+    critique_a = next(s for s in record.stages if s.name == "critique_a_of_b")
+    assert critique_a.status == "succeeded"  # unaffected sibling in the same wave
+    assert "red_team" not in fake_orchestrator_state["log"]  # never actually called
+    # The whole point: the run reaches a complete, usable answer without any
+    # manual intervention -- no failed state, no budget-exceeded notice.
     assert record.status == "succeeded"
+    synthesis = next(s for s in record.stages if s.name == "synthesis")
+    assert synthesis.status == "succeeded"
 
 
 def test_resume_works_after_budget_is_increased(service, fake_orchestrator_state):

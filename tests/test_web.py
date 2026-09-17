@@ -450,6 +450,37 @@ def test_language_contract_mismatch_notice_absent_for_a_normal_run(client, servi
     assert "Working-language instruction was not followed for this stage." not in detail.text
 
 
+def test_red_team_skipped_for_budget_shows_concise_notice(client, service, fake_orchestrator_state):
+    """Completion-reserve follow-up -- red_team auto-skipped to protect
+    completion budget must show a concise, accurate notice on the actual
+    succeeded-run results page (not implying red_team failed, and not a
+    large financial dashboard)."""
+    from decimal import Decimal
+
+    fake_orchestrator_state["upper_bound_cost_usd"] = {"red_team": Decimal("0.30")}
+    run_id = service.create_run(
+        "Q?", "economy", red_team_enabled=True, max_run_cost_usd="0.35"
+    )
+    import asyncio
+
+    record = asyncio.run(service.start_run(run_id))
+    assert record.status == "succeeded"
+
+    detail = client.get(f"/runs/{run_id}")
+    assert "Red-team was skipped to preserve enough budget to complete the final result." in detail.text
+
+
+def test_red_team_off_from_the_start_shows_no_budget_notice(client, service):
+    run_id = service.create_run("Q?", "economy", red_team_enabled=False)
+    import asyncio
+
+    record = asyncio.run(service.start_run(run_id))
+    assert record.status == "succeeded"
+
+    detail = client.get(f"/runs/{run_id}")
+    assert "Red-team was skipped to preserve enough budget" not in detail.text
+
+
 def test_export_markdown_discloses_fallback(client, service, fake_orchestrator_state):
     fake_orchestrator_state["responses"] = {
         "red_team": {

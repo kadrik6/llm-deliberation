@@ -152,6 +152,7 @@ async def _run(args: argparse.Namespace) -> int:
 
     if args.diagnose_run:
         from llm_deliberation.diagnostics import (
+            format_completion_reserve_report,
             format_efficiency_table,
             format_language_contract_report,
             stage_efficiency_rows,
@@ -169,6 +170,10 @@ async def _run(args: argparse.Namespace) -> int:
         print()
         print("Working-language contract:")
         print(format_language_contract_report(rows))
+        print()
+        print("Completion reserve:")
+        diag_settings = Settings.load(profile_override=record.profile, red_team_override=record.red_team_enabled)
+        print(format_completion_reserve_report(record, diag_settings))
         return 0
 
     if args.retry_stage:

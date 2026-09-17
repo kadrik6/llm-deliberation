@@ -52,6 +52,33 @@ ALL_STAGE_NAMES: tuple[str, ...] = tuple(
 # is always attempted but can be skipped once it has failed.
 SKIPPABLE_STAGE_NAMES: frozenset[str] = frozenset({"red_team", "convergence_analysis"})
 
+# Stable, exact-match sentinel stored as a skipped red_team stage's
+# fallback_reason (see service._execute's completion-reserve check /
+# store.mark_stage_skipped) when it was skipped automatically to protect the
+# budget required for still-required stages -- distinct from the existing
+# "skipped by user after it failed" reason, so the UI (see
+# presenter.build_pipeline's skip_note_key) can show a different, accurate
+# explanation rather than implying red_team itself failed.
+RED_TEAM_COMPLETION_RESERVE_SKIP_REASON = (
+    "Skipped automatically to preserve enough budget to complete the "
+    "required remaining stages."
+)
+
+# Stages a deliberation cannot produce a trustworthy final answer without --
+# none of these are in SKIPPABLE_STAGE_NAMES, so a failure in any of them
+# already halts the run (see service._execute's run_failed gating) rather
+# than letting downstream stages (especially convergence_analysis) run on
+# missing evidence. Order matches the pipeline's own display order. Lives
+# here (not web/presenter.py, which originally defined it) so cost_budget.py
+# and service.py -- neither of which should depend on the web layer -- can
+# use it too (see cost_budget.estimate_remaining_completion_reserve).
+REQUIRED_STAGE_ORDER: tuple[str, ...] = (
+    "analysis_a", "analysis_b",
+    "critique_a_of_b", "critique_b_of_a",
+    "revision_a", "revision_b",
+    "synthesis",
+)
+
 # Verbose, intermediate reasoning stages -- these may use a different
 # ("working") language than the run's own output language, purely for
 # token-efficiency/reliability (see prompts.working_language_override_instruction

@@ -164,6 +164,15 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "red_team_meta_label": {"en": "Red-team", "et": "Punane meeskond"},
     "red_team_on": {"en": "on", "et": "sees"},
     "red_team_off": {"en": "off", "et": "väljas"},
+    # Shown on the final results page (see presenter.red_team_skipped_for_
+    # budget_reserve) when red-team was configured on but automatically
+    # skipped to protect the budget needed to complete the run -- distinct
+    # from the plain "off" label above, which means the user never enabled
+    # it in the first place.
+    "red_team_skipped_for_budget_notice": {
+        "en": "Red-team was skipped to preserve enough budget to complete the final result.",
+        "et": "Punase meeskonna etapp jäeti vahele, et säilitada piisav eelarve lõpptulemuse valmimiseks.",
+    },
     "elapsed_label": {"en": "Elapsed", "et": "Möödunud aeg"},
     "cost_meta_label": {"en": "Cost", "et": "Maksumus"},
 
@@ -262,6 +271,15 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "skip_note_red_team": {
         "en": "Skipped after the red-team stage could not complete.",
         "et": "Vahele jäetud, sest punase meeskonna etapp ei õnnestunud.",
+    },
+    # Distinct from skip_note_red_team above: this is a PROACTIVE, automatic
+    # skip (see cost_budget.estimate_remaining_completion_reserve /
+    # service._execute) -- red_team was never attempted at all, not failed.
+    # Never shown for any stage other than red_team (see
+    # orchestrator.RED_TEAM_COMPLETION_RESERVE_SKIP_REASON).
+    "skip_note_red_team_budget_reserve": {
+        "en": "Red-team was skipped to preserve enough budget to complete the final result.",
+        "et": "Punase meeskonna etapp jäeti vahele, et säilitada piisav eelarve lõpptulemuse valmimiseks.",
     },
     "skip_note_convergence_analysis": {
         "en": "Skipped after convergence analysis could not complete.",

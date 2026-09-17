@@ -24,8 +24,12 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
+from typing import TYPE_CHECKING
 
 from llm_deliberation.pricing import PRICING
+
+if TYPE_CHECKING:
+    from llm_deliberation.store import StageRecord
 
 
 def _new_lock() -> threading.Lock:
@@ -168,6 +172,120 @@ def estimate_run_cost_range(
         low += _stage_cost(model, chars, max_out * _LOW_OUTPUT_FRACTION)
         high += _stage_cost(model, chars, max_out * _HIGH_OUTPUT_FRACTION)
     return CostEstimate(low_usd=low, high_usd=high)
+
+
+# -- completion reserve ---------------------------------------------------
+#
+# The admission check above (RunBudgetGuard.check) only ever answers "can we
+# afford the next call" against the run's total budget -- it never looks
+# ahead to whether later, still-required stages (especially synthesis, the
+# actual user deliverable) will still be affordable afterward. A capped run
+# could spend heavily on optional work (red-team, a truncation/language
+# recovery retry) early on and only discover at the convergence/synthesis
+# wave that nothing is left -- the exact failure mode this section protects
+# against. See docs/decisions and the reliability-pass follow-up for the
+# full rationale.
+#
+# "Reserved" (protected) stages are presenter.REQUIRED_STAGE_ORDER's 7
+# stages plus convergence_analysis -- every run attempts convergence_analysis
+# by default and nothing today proactively sacrifices it to save money
+# before it has even been tried (it is only ever skipped *after* it has
+# already failed, a distinct, existing, user-driven action). red_team is
+# deliberately NOT in this set: it is the only stage eligible for a
+# proactive, budget-driven auto-skip (see service._execute).
+
+RESERVED_FOR_COMPLETION_STAGE_NAMES: tuple[str, ...] = (
+    "analysis_a", "analysis_b",
+    "critique_a_of_b", "critique_b_of_a",
+    "revision_a", "revision_b",
+    "convergence_analysis",
+    "synthesis",
+)
+
+
+@dataclass(slots=True)
+class CompletionReserve:
+    """Result of estimate_remaining_completion_reserve() -- see its
+    docstring. `remaining_budget_usd`/`optional_spendable_usd` are None
+    exactly when the run has no cap (max_run_cost_usd unset), reproducing
+    today's "no cap" semantics: nothing is ever reserved or blocked."""
+
+    required_remaining_usd: Decimal
+    reserved_stage_names: tuple[str, ...]
+    remaining_budget_usd: Decimal | None
+    optional_spendable_usd: Decimal | None
+
+
+def estimate_remaining_completion_reserve(
+    stages: list["StageRecord"],
+    *,
+    budget_usd: Decimal | None,
+    spent_usd: Decimal,
+    openai_model: str,
+    anthropic_model: str,
+    convergence_provider: str,
+    convergence_model: str,
+    max_output_tokens: int,
+    exclude_stage_names: frozenset[str] = frozenset(),
+) -> CompletionReserve:
+    """How much of the run's remaining budget must stay protected for
+    still-required work to have a realistic chance of completing.
+
+    For every name in RESERVED_FOR_COMPLETION_STAGE_NAMES that is not
+    already `succeeded`, not `skipped` (a skipped stage will never run
+    again this run -- see mark_stage_skipped), and not in
+    `exclude_stage_names`, adds that stage's typical-input-chars upper-bound
+    cost (the exact same declared-approximate estimator
+    estimate_run_cost_range already uses, at its 100%-of-max_output_tokens
+    high end -- deliberately not a new estimation mechanism). A stage that
+    has already failed is still reserved for: it is required, so it must
+    still be retried/resumed to reach completion.
+
+    `exclude_stage_names` exists so a caller mid-way through admitting one
+    wave's stages (e.g. service._execute checking red_team, whose wave-mates
+    critique_a_of_b/critique_b_of_a may already be counted in that wave's
+    own running `reserved` total) does not double-count them here too.
+
+    Never reserves for: succeeded stages, skipped stages, red_team (never a
+    member of RESERVED_FOR_COMPLETION_STAGE_NAMES), or anything in
+    `exclude_stage_names`.
+    """
+    stage_models: dict[str, str] = {
+        "analysis_a": openai_model,
+        "analysis_b": anthropic_model,
+        "critique_a_of_b": openai_model,
+        "critique_b_of_a": anthropic_model,
+        "revision_a": openai_model,
+        "revision_b": anthropic_model,
+        "synthesis": openai_model,
+        "convergence_analysis": convergence_model if convergence_provider else anthropic_model,
+    }
+    by_name = {s.name: s for s in stages}
+    max_out = Decimal(max_output_tokens)
+
+    required_remaining = Decimal(0)
+    reserved_names: list[str] = []
+    for name in RESERVED_FOR_COMPLETION_STAGE_NAMES:
+        if name in exclude_stage_names:
+            continue
+        stage = by_name.get(name)
+        if stage is not None and stage.status in ("succeeded", "skipped"):
+            continue
+        model = stage_models[name]
+        chars = _STAGE_TYPICAL_INPUT_CHARS[name]
+        required_remaining += _stage_cost(model, chars, max_out * _HIGH_OUTPUT_FRACTION)
+        reserved_names.append(name)
+
+    remaining_budget = None if budget_usd is None else (budget_usd - spent_usd)
+    optional_spendable = (
+        None if remaining_budget is None else (remaining_budget - required_remaining)
+    )
+    return CompletionReserve(
+        required_remaining_usd=required_remaining,
+        reserved_stage_names=tuple(reserved_names),
+        remaining_budget_usd=remaining_budget,
+        optional_spendable_usd=optional_spendable,
+    )
 
 
 # -- runtime hard guard ---------------------------------------------------

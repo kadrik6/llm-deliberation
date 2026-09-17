@@ -1,0 +1,15 @@
+{
+  "case_id": "example-nonprofit-crm",
+  "title": "Small nonprofit CRM adoption decision",
+  "question": "Should a 12-person nonprofit switch its donor database from spreadsheets to a dedicated CRM tool this quarter, given a limited budget and one part-time admin staff member?",
+  "context": null,
+  "output_language": "en",
+  "expected_deliverable": "A clear go/no-go recommendation for this quarter, with a concrete near-term action plan.",
+  "important_constraints": [
+    "budget is limited",
+    "solution must work without dedicated IT staff",
+    "existing historical donor data must be preserved",
+    "only one part-time staff member is available to operate whatever is chosen"
+  ],
+  "review_notes": "Simple, bounded, single-decision case. Used as the canary/example case during harness development -- see AUDIT_REPORT.md."
+}

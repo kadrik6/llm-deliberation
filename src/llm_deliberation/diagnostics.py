@@ -18,7 +18,10 @@ runs, not asserted in advance.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 
+from llm_deliberation.config import Settings
+from llm_deliberation.cost_budget import estimate_remaining_completion_reserve
 from llm_deliberation.orchestrator import resolve_stage_language
 from llm_deliberation.store import RunRecord
 
@@ -108,6 +111,48 @@ def format_efficiency_table(rows: list[StageEfficiencyRow]) -> str:
             f"{row.stage:<22} {row.language_used:<5} {row.input_tokens:>7} "
             f"{row.output_tokens:>7} ${row.estimated_cost_usd:>8.4f}  {row.finish_reason}"
         )
+    return "\n".join(lines)
+
+
+def format_completion_reserve_report(record: RunRecord, settings: Settings) -> str:
+    """Explains the completion-reserve state for a run right now -- what has
+    been spent, what is estimated still required, and how much optional
+    (red_team) headroom that leaves (see
+    cost_budget.estimate_remaining_completion_reserve, service._execute's
+    admission loop). Pure/read-only: reuses the same estimator the live
+    admission check uses, against already-persisted state -- never a new
+    estimate, never a provider call.
+
+    Returns a short explanatory line when the run has no cost cap at all
+    (max_run_cost_usd unset) -- the reserve concept is a no-op there, exactly
+    as today's plain budget guard already is.
+    """
+    if not record.max_run_cost_usd:
+        return "(no max_run_cost_usd set for this run -- completion reserve does not apply)"
+
+    budget_usd = Decimal(record.max_run_cost_usd)
+    spent_usd = Decimal(str(round(record.estimated_total_cost_usd, 6)))
+    reserve = estimate_remaining_completion_reserve(
+        record.stages,
+        budget_usd=budget_usd,
+        spent_usd=spent_usd,
+        openai_model=settings.openai_model,
+        anthropic_model=settings.anthropic_model,
+        convergence_provider=settings.convergence_provider,
+        convergence_model=settings.convergence_model,
+        max_output_tokens=settings.max_output_tokens,
+    )
+    lines = [
+        f"Spent: ${spent_usd:.4f}",
+        f"Remaining run budget: ${reserve.remaining_budget_usd:.4f}",
+        f"Estimated completion reserve: ${reserve.required_remaining_usd:.4f}",
+        f"Optional spendable budget: ${reserve.optional_spendable_usd:.4f}",
+    ]
+    if reserve.reserved_stage_names:
+        lines.append("Reserved stages:")
+        lines.extend(f"- {name}" for name in reserve.reserved_stage_names)
+    else:
+        lines.append("Reserved stages: (none -- every required stage has already succeeded)")
     return "\n".join(lines)
 
 

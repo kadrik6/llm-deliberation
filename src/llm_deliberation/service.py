@@ -12,10 +12,12 @@ from llm_deliberation.cost_budget import (
     BudgetExceededError,
     RunBudgetGuard,
     default_budget_from_float,
+    estimate_remaining_completion_reserve,
     parse_budget_usd,
 )
 from llm_deliberation.orchestrator import (
     ALL_STAGE_NAMES,
+    RED_TEAM_COMPLETION_RESERVE_SKIP_REASON,
     SKIPPABLE_STAGE_NAMES,
     WAVES,
     DeliberationOrchestrator,
@@ -367,6 +369,42 @@ class DeliberationService:
                     name, effective_question, texts,
                     output_language=run.language, working_language=effective_working_language,
                 )
+
+                # Completion-reserve check -- red_team only, and only when
+                # the run has a cap at all. Optional spend must not
+                # knowingly consume the budget required to still reach a
+                # complete result (see cost_budget.py's "completion reserve"
+                # section). This is a stricter, EARLIER check than the
+                # normal admission check below: it can auto-skip red_team
+                # (no failure, run continues) even when the normal check
+                # would otherwise have admitted it. `exclude_stage_names=
+                # set(pending_names)` avoids double-counting this same
+                # wave's other pending stages (e.g. critique_a_of_b/
+                # critique_b_of_a), whose cost is already tracked in
+                # `reserved` below -- they are not yet `succeeded` in the DB
+                # at this point, so the reserve estimator would otherwise
+                # count them a second time.
+                if name == "red_team" and budget_usd is not None:
+                    reserve = estimate_remaining_completion_reserve(
+                        list(stages_by_name.values()),
+                        budget_usd=budget_usd,
+                        spent_usd=budget_guard.spent_usd,
+                        openai_model=settings.openai_model,
+                        anthropic_model=settings.anthropic_model,
+                        convergence_provider=settings.convergence_provider,
+                        convergence_model=settings.convergence_model,
+                        max_output_tokens=settings.max_output_tokens,
+                        exclude_stage_names=frozenset(pending_names),
+                    )
+                    projected_remaining = (
+                        reserve.remaining_budget_usd - reserved - upper_bound
+                    )
+                    if projected_remaining < reserve.required_remaining_usd:
+                        self.repo.mark_stage_skipped(
+                            stage.id, reason=RED_TEAM_COMPLETION_RESERVE_SKIP_REASON
+                        )
+                        continue
+
                 try:
                     budget_guard.check(reserved + upper_bound)
                 except BudgetExceededError as budget_exc:

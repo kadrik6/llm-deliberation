@@ -3,7 +3,12 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 
-from llm_deliberation.orchestrator import SKIPPABLE_STAGE_NAMES, resolve_stage_language
+from llm_deliberation.orchestrator import (
+    RED_TEAM_COMPLETION_RESERVE_SKIP_REASON,
+    REQUIRED_STAGE_ORDER,
+    SKIPPABLE_STAGE_NAMES,
+    resolve_stage_language,
+)
 from llm_deliberation.store import RunRecord, StageRecord
 
 # A run in one of these statuses is done for good: nothing will ever change
@@ -18,6 +23,23 @@ TERMINAL_RUN_STATUSES: frozenset[str] = frozenset({"succeeded", "failed"})
 
 def is_terminal_run_status(status: str) -> bool:
     return status in TERMINAL_RUN_STATUSES
+
+
+def red_team_skipped_for_budget_reserve(record: RunRecord) -> bool:
+    """True only when red_team was configured on but got auto-skipped by
+    the completion-reserve check (see cost_budget.
+    estimate_remaining_completion_reserve / service._execute) -- never true
+    for a disabled-from-the-start run (no stage row at all) or a manually
+    skipped-after-failure one (a different, existing fallback_reason). Used
+    by result.html to show a concise explanation on the final results page,
+    where a succeeded run actually lands -- the pipeline view's per-stage
+    skip note alone is never seen once a run completes."""
+    stage = next((s for s in record.stages if s.name == "red_team"), None)
+    return (
+        stage is not None
+        and stage.status == "skipped"
+        and stage.fallback_reason == RED_TEAM_COMPLETION_RESERVE_SKIP_REASON
+    )
 
 
 STATUS_SYMBOLS: dict[str, str] = {
@@ -99,19 +121,6 @@ _SKIP_NOTE_KEYS: dict[str, str] = {
     "red_team": "skip_note_red_team",
     "convergence_analysis": "skip_note_convergence_analysis",
 }
-
-# Stages a deliberation cannot produce a trustworthy final answer without --
-# none of these are in SKIPPABLE_STAGE_NAMES, so a failure in any of them
-# already halts the run (see service._execute's run_failed gating) rather
-# than letting downstream stages (especially convergence_analysis) run on
-# missing evidence. Order matches the pipeline's own display order, purely
-# for a stable, readable list of reasons.
-REQUIRED_STAGE_ORDER: tuple[str, ...] = (
-    "analysis_a", "analysis_b",
-    "critique_a_of_b", "critique_b_of_a",
-    "revision_a", "revision_b",
-    "synthesis",
-)
 
 # i18n key (web/i18n.py) used to name each required stage in a quality-issue
 # bullet. Reuses the existing artifact-section titles where one exists;
@@ -424,7 +433,11 @@ def build_pipeline(record: RunRecord) -> list[dict]:
                     "skippable": name in SKIPPABLE_STAGE_NAMES and stage.status == "failed",
                     "fallback_chain_retry": name == "red_team",
                     "skip_label_key": _SKIP_LABEL_KEYS.get(name, "skip_and_continue"),
-                    "skip_note_key": _SKIP_NOTE_KEYS.get(name),
+                    "skip_note_key": (
+                        "skip_note_red_team_budget_reserve"
+                        if stage.fallback_reason == RED_TEAM_COMPLETION_RESERVE_SKIP_REASON
+                        else _SKIP_NOTE_KEYS.get(name)
+                    ),
                 }
             )
         groups.append({"title": title, "rows": rows})

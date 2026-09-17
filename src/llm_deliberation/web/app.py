@@ -49,6 +49,7 @@ from llm_deliberation.web.presenter import (
     history_question_preview,
     input_preview,
     is_terminal_run_status,
+    red_team_skipped_for_budget_reserve,
 )
 
 WEB_DIR = Path(__file__).parent
@@ -482,6 +483,7 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
             # was orphaned "running" by a previous process lifetime, never
             # while this run is genuinely executing right now.
             "stale_running": stale_running_stage(record),
+            "red_team_skipped_for_budget": red_team_skipped_for_budget_reserve(record),
         }
 
         if record.status == "succeeded":

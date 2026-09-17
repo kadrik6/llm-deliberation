@@ -62,6 +62,15 @@
     <span>{{ "profile_meta_label"|t }}: {{ ("profile_name_" ~ record.profile)|t }}</span>
     <span>{{ "red_team_meta_label"|t }}: {{ "red_team_on"|t if record.red_team_enabled else "red_team_off"|t }}</span>
   </div>
+  {% if red_team_skipped_for_budget %}
+  {# See presenter.red_team_skipped_for_budget_reserve -- a concise,
+     product-level explanation, kept subtle (a single hint line, not a
+     financial dashboard) per the completion-reserve UI requirements.
+     Never shown for a normally-disabled run (record.red_team_enabled is
+     still True here -- the setting stayed on, only this one run's
+     execution skipped it to protect completion). #}
+  <p class="hint">{{ "red_team_skipped_for_budget_notice"|t }}</p>
+  {% endif %}
 </section>
 
 {% include "partials/convergence_summary.html" %}
