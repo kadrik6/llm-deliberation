@@ -104,18 +104,12 @@ def test_experiments_are_independent_of_production_run_history(tmp_path):
 # -- case format --------------------------------------------------------
 
 
-def test_load_case_requires_manually_authored_constraints(tmp_path):
-    path = tmp_path / "bad-case.json"
-    path.write_text(json.dumps({
-        "case_id": "bad-case", "title": "Bad", "question": "Q?",
-        "output_language": "en", "expected_deliverable": "An answer.",
-        "important_constraints": [],
-    }))
-    with pytest.raises(ValueError, match="important_constraints"):
-        load_case(path)
-
-
 def test_load_case_round_trip(tmp_path):
+    """EvalCase is public-only -- see test_evaluation_case_separation.py for
+    ReviewerMetadata/load_reviewer_metadata's own round-trip and
+    empty-important_constraints-rejection tests. A case file may still
+    carry legacy embedded reviewer fields (Pilot Case 1's style); load_case
+    simply never reads them onto the returned object."""
     path = tmp_path / "good-case.json"
     path.write_text(json.dumps({
         "case_id": "good-case", "title": "Good", "question": "Q?",
@@ -128,7 +122,8 @@ def test_load_case_round_trip(tmp_path):
     assert isinstance(case, EvalCase)
     assert case.case_id == "good-case"
     assert case.output_language == "et"
-    assert case.important_constraints == ["budget is limited"]
+    assert not hasattr(case, "important_constraints")
+    assert not hasattr(case, "review_notes")
 
 
 def test_load_cases_from_the_real_eval_cases_directory():

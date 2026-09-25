@@ -12,6 +12,13 @@ dist/
 .env
 .env.local
 
+# Private evaluation-case reviewer metadata (answer keys, rubrics, coding
+# sheets) for cases still awaiting human blind review -- must never be
+# publicly tracked before scoring. See
+# src/llm_deliberation/evaluation/cases.py's ReviewerMetadata /
+# load_reviewer_metadata, and docs/verification-matrix.md.
+eval_private/
+
 # Local application data (SQLite runs database, Markdown exports)
 data/
 *.db
