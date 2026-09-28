@@ -158,7 +158,7 @@ A `YES` in one column never implies a `YES` in another. "Offline verified" does 
 | SINGLE live result | YES | `47b0de64fec2`, succeeded, $0.0257/38s/1 call |
 | DUAL live result | YES | `c47b5b345a65`, succeeded, $0.1413/164s/4 calls |
 | CRITIQUE live result | YES | `3f616996042a`, succeeded, $0.2938/326s/8 calls |
-| FULL status | **NOT ATTEMPTED (blocked)**, not "failed" in the quality sense | Two genuine attempts (`7f61fff17b1b`, `350276ef7d32`) both stopped at `red_team` on an external HTTP 403; not a code, model, or application defect |
+| FULL status | **FULL attempted; externally blocked at Gemini red-team. No complete FULL evaluation result exists.** | Two genuine attempts (`7f61fff17b1b`, `350276ef7d32`) both reached and stopped at `red_team` on an external HTTP 403; not a code, model, or application defect |
 | Current Gemini limitation | BLOCKED by user choice (billing) | See §2 |
 | Blind-review status | **NOT STARTED** | No valid 4-way export exists; the one auto-generated artifact is invalid and unused (see §7) |
 | What must remain uninspected/unblinded | SINGLE/DUAL/CRITIQUE outputs (content), any mapping, any stage-level constraint-detection coding | Deliberately not inspected in this audit — confirmed: this document contains zero semantic commentary on any Case 3 output |

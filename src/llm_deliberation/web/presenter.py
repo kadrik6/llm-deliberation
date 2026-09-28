@@ -25,20 +25,129 @@ def is_terminal_run_status(status: str) -> bool:
     return status in TERMINAL_RUN_STATUSES
 
 
-def red_team_skipped_for_budget_reserve(record: RunRecord) -> bool:
-    """True only when red_team was configured on but got auto-skipped by
-    the completion-reserve check (see cost_budget.
-    estimate_remaining_completion_reserve / service._execute) -- never true
-    for a disabled-from-the-start run (no stage row at all) or a manually
-    skipped-after-failure one (a different, existing fallback_reason). Used
-    by result.html to show a concise explanation on the final results page,
-    where a succeeded run actually lands -- the pipeline view's per-stage
-    skip note alone is never seen once a run completes."""
+# Decision Cockpit Phase 1 (see docs/design/decision-cockpit-proposal.md) --
+# a truthful, semantically-distinct red-team status, replacing the old
+# on/off-only label. Every state below is derived only from already-
+# persisted StageRecord fields -- no new schema, no semantic inference (see
+# AUDIT_REPORT.md-style "structured/deterministic vs human-coded vs
+# unavailable" classification: this whole function is Category B,
+# deterministically derivable).
+RED_TEAM_STATE_CONFIGURED_OFF = "configured_off"
+RED_TEAM_STATE_COMPLETED = "completed"
+RED_TEAM_STATE_SKIPPED = "skipped"
+RED_TEAM_STATE_SKIPPED_FOR_BUDGET = "skipped_for_budget"
+RED_TEAM_STATE_FAILED = "failed"
+RED_TEAM_STATE_EXTERNALLY_BLOCKED = "externally_blocked"
+RED_TEAM_STATE_UNAVAILABLE = "unavailable"
+
+# HTTP status codes that unambiguously mean "the provider denied access to
+# this account/project/credential" under ordinary HTTP semantics -- never a
+# content, transient-availability, or reasoning-quality issue. Classifying
+# on the numeric code alone (not a specific provider's message text) keeps
+# this general rather than pattern-matching one incident's wording.
+_EXTERNAL_ACCESS_DENIED_HTTP_CODES: frozenset[int] = frozenset({401, 403})
+
+
+def _stage_attempt_http_code(attempt_log: list[dict] | None) -> int | None:
+    """The most recent attempt's http_code from a stage's attempt_log, if
+    any entry recorded one (see providers._Attempt.to_dict) -- never
+    inferred from free text."""
+    if not attempt_log:
+        return None
+    for entry in reversed(attempt_log):
+        code = entry.get("http_code")
+        if code is not None:
+            return code
+    return None
+
+
+def red_team_state(record: RunRecord) -> dict:
+    """One truthful state for the red_team stage, never collapsing distinct
+    situations into a single "off"/"failed" label:
+
+    - configured_off: red_team was never enabled for this run (no stage
+      row at all -- see service.create_run).
+    - completed: the stage succeeded. Callers may separately look up
+      "referenced in N material changes" from convergence data -- this
+      function never guesses at that from the red_team stage alone.
+    - skipped: an optional stage the user (or an earlier failure-driven
+      flow) explicitly skipped, for a reason other than the completion
+      reserve, and with no recorded external-access denial.
+    - skipped_for_budget: auto-skipped by the completion-reserve check
+      (see cost_budget.estimate_remaining_completion_reserve /
+      service._execute) -- distinct from a plain "skipped" because nothing
+      about red_team itself failed; it was never attempted, to protect
+      completing the rest of the run.
+    - failed: the stage was attempted and failed for a reason other than
+      an access/permission denial, and the run itself did not go on to
+      succeed (a failed, non-skippable-away red_team keeps the whole run
+      "failed" -- see service._execute's run_failed flag).
+    - externally_blocked: an HTTP 401/403 is recorded in the stage's
+      attempt_log -- an account/credential/billing-side denial by the
+      provider, not a code or model defect (see AUDIT_REPORT.md/
+      verification-matrix.md's Gemini findings). Checked regardless of
+      whether the stage's *current* status is "failed" or "skipped": a
+      user can skip a stage after it failed (see store.mark_stage_skipped,
+      which lets the run go on to "succeeded" but deliberately does not
+      clear attempt_log), and that history must not be lost just because
+      the terminal status is now "skipped" rather than "failed".
+    - unavailable: red_team was enabled but no stage row exists, or the
+      stage is still pending/running when this is read -- an honest "don't
+      know yet" rather than an invented status.
+    """
     stage = next((s for s in record.stages if s.name == "red_team"), None)
-    return (
-        stage is not None
-        and stage.status == "skipped"
-        and stage.fallback_reason == RED_TEAM_COMPLETION_RESERVE_SKIP_REASON
+    if not record.red_team_enabled:
+        return {"status": RED_TEAM_STATE_CONFIGURED_OFF}
+    if stage is None:
+        return {"status": RED_TEAM_STATE_UNAVAILABLE}
+    if stage.status == "succeeded":
+        return {"status": RED_TEAM_STATE_COMPLETED}
+    if stage.status == "skipped":
+        if stage.fallback_reason == RED_TEAM_COMPLETION_RESERVE_SKIP_REASON:
+            return {"status": RED_TEAM_STATE_SKIPPED_FOR_BUDGET}
+        http_code = _stage_attempt_http_code(stage.attempt_log)
+        if http_code in _EXTERNAL_ACCESS_DENIED_HTTP_CODES:
+            return {"status": RED_TEAM_STATE_EXTERNALLY_BLOCKED, "http_code": http_code}
+        return {"status": RED_TEAM_STATE_SKIPPED}
+    if stage.status == "failed":
+        http_code = _stage_attempt_http_code(stage.attempt_log)
+        if http_code in _EXTERNAL_ACCESS_DENIED_HTTP_CODES:
+            return {"status": RED_TEAM_STATE_EXTERNALLY_BLOCKED, "http_code": http_code}
+        return {"status": RED_TEAM_STATE_FAILED}
+    return {"status": RED_TEAM_STATE_UNAVAILABLE}
+
+
+def trace_summary(record: RunRecord) -> dict:
+    """Compact, aggregate operational rollup for the Decision Cockpit's
+    Level 4 trace area -- total provider attempts, how many logical stages
+    ran, and how many of those needed a retry or fallback. Every number
+    here is a plain sum/count over already-persisted StageRecord fields
+    (Category A/B -- see docs/verification-matrix.md); never implies more
+    attempts/stages/cost means a better or worse answer (see the Decision
+    Cockpit proposal's terminology-safeguard table)."""
+    stages = record.stages
+    return {
+        "logical_stages": len(stages),
+        "total_provider_attempts": sum(s.model_attempts for s in stages),
+        "stages_with_retry_or_fallback": sum(1 for s in stages if s.model_attempts > 1),
+    }
+
+
+def red_team_material_change_reference_count(evolution) -> int | None:
+    """How many material changes list red_team as at least one trigger
+    source -- the only red-team "contribution" claim the persisted schema
+    actually supports (see MaterialChange.triggers). Returns None when
+    there is no convergence data at all (never 0-as-unknown -- see
+    presenter's own "prefer 'not recorded' over a fabricated 0" rule).
+    Deliberately never phrased as "issues found" or "errors caught":
+    a trigger is the convergence analyst's own attribution, not a
+    verified fact (see convergence.py's module docstring)."""
+    if evolution is None:
+        return None
+    return sum(
+        1
+        for change in evolution.material_changes
+        if change.change_status == "material" and any(t.source == "red_team" for t in change.triggers)
     )
 
 

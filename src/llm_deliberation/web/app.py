@@ -49,7 +49,9 @@ from llm_deliberation.web.presenter import (
     history_question_preview,
     input_preview,
     is_terminal_run_status,
-    red_team_skipped_for_budget_reserve,
+    red_team_material_change_reference_count,
+    red_team_state,
+    trace_summary,
 )
 
 WEB_DIR = Path(__file__).parent
@@ -483,7 +485,15 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
             # was orphaned "running" by a previous process lifetime, never
             # while this run is genuinely executing right now.
             "stale_running": stale_running_stage(record),
-            "red_team_skipped_for_budget": red_team_skipped_for_budget_reserve(record),
+            # Decision Cockpit Phase 1 -- see presenter.red_team_state's
+            # docstring for the full, truthful state taxonomy (configured
+            # off / completed / skipped / skipped for budget / failed /
+            # externally blocked / unavailable). Computed here (not just on
+            # the succeeded branch below) since it's meaningful on the
+            # pipeline view too, even though this phase only renders it on
+            # the succeeded-run result page.
+            "red_team_state": red_team_state(record),
+            "trace_summary": trace_summary(record),
         }
 
         if record.status == "succeeded":
@@ -513,6 +523,10 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
                     # run's output language (see result.html), so an
                     # English run's trace is visually unchanged.
                     "artifact_languages": artifact_language_tags(record),
+                    # None (not 0) when there is no convergence data at all
+                    # -- see red_team_material_change_reference_count's own
+                    # "prefer 'not recorded' over a fabricated 0" docstring.
+                    "red_team_material_change_count": red_team_material_change_reference_count(evolution),
                 }
             )
         else:

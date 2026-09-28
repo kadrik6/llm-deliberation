@@ -173,6 +173,45 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "Red-team was skipped to preserve enough budget to complete the final result.",
         "et": "Punase meeskonna etapp jäeti vahele, et säilitada piisav eelarve lõpptulemuse valmimiseks.",
     },
+
+    # -- Decision Cockpit Phase 1: truthful red-team status component -----
+    # (see presenter.red_team_state). Each key names one of 7 semantically
+    # distinct states -- never collapsed into a single on/off/failed label.
+    # "skipped_for_budget" deliberately reuses red_team_skipped_for_budget_
+    # notice above rather than a near-duplicate string, so the exact
+    # sentence tests assert on stays a single source of truth.
+    "red_team_status_label": {"en": "Red-team status", "et": "Punase meeskonna olek"},
+    "red_team_state_configured_off": {
+        "en": "Off (not configured for this run)",
+        "et": "Väljas (selle käigu jaoks pole sisse lülitatud)",
+    },
+    "red_team_state_completed": {"en": "Completed", "et": "Lõpetatud"},
+    "red_team_state_skipped": {"en": "Skipped", "et": "Vahele jäetud"},
+    "red_team_state_skipped_for_budget": {
+        "en": "Skipped to preserve budget",
+        "et": "Vahele jäetud eelarve säilitamiseks",
+    },
+    "red_team_state_failed": {"en": "Failed", "et": "Ebaõnnestus"},
+    "red_team_state_externally_blocked": {
+        "en": "Externally blocked by the provider",
+        "et": "Pakkuja blokeeris juurdepääsu väliselt",
+    },
+    "red_team_state_externally_blocked_hint": {
+        "en": "The provider account/credential denied this request. This is not a code or model defect.",
+        "et": "Pakkuja konto/mandaat keeldus sellest päringust. See ei ole koodi ega mudeli viga.",
+    },
+    "red_team_state_unavailable": {"en": "Not recorded", "et": "Andmed puuduvad"},
+    # "Referenced in" a material change is the only red-team "contribution"
+    # claim the persisted schema supports (see presenter.
+    # red_team_material_change_reference_count) -- deliberately never
+    # "found N errors" or "caught N issues", since a trigger is the
+    # convergence analyst's own attribution, not a verified fact.
+    "red_team_referenced_in_changes_prefix": {"en": "Referenced in", "et": "Mainitud"},
+    "red_team_not_referenced_in_changes": {
+        "en": "Not referenced in any material change.",
+        "et": "Ei ole mainitud üheski sisulises muutuses.",
+    },
+    "trace_summary_heading": {"en": "Operational trace", "et": "Tehniline jälg"},
     "elapsed_label": {"en": "Elapsed", "et": "Möödunud aeg"},
     "cost_meta_label": {"en": "Cost", "et": "Maksumus"},
 
@@ -711,6 +750,21 @@ _COUNT_NOUNS: dict[str, dict[str, tuple[str, str]]] = {
     "section": {
         "en": ("section", "sections"),
         "et": ("jaotis", "jaotist"),
+    },
+    # Decision Cockpit Phase 1's compact trace/observability rollup (see
+    # presenter.trace_summary) -- plain counts only, never implying more
+    # stages/attempts/retries means a better or worse answer.
+    "pipeline_stage": {
+        "en": ("pipeline stage", "pipeline stages"),
+        "et": ("etapp", "etappi"),
+    },
+    "provider_attempt": {
+        "en": ("provider attempt", "provider attempts"),
+        "et": ("pakkuja katse", "pakkuja katset"),
+    },
+    "stage_with_retry_or_fallback": {
+        "en": ("stage needed a retry or fallback", "stages needed a retry or fallback"),
+        "et": ("etapp vajas uut katset või varulahendust", "etappi vajasid uut katset või varulahendust"),
     },
 }
 

@@ -509,6 +509,47 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 .convergence-badge.convergence-insufficient-information,
 .convergence-badge.convergence-unavailable { background: #eee; color: var(--text-muted); }
 
+/* Decision Cockpit Phase 1 -- truthful red-team status (see
+   presenter.red_team_state / partials/result.html). Color is always paired
+   with the translated status text itself, never color-only (the text node
+   is the actual status; the color is a redundant, non-load-bearing cue). */
+.red-team-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 0.5rem;
+  font-size: 0.9rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.85rem;
+  margin-top: 0.85rem;
+}
+.red-team-status-label { color: var(--text-muted); }
+.red-team-status-value { font-weight: 600; }
+.red-team-status-code { color: var(--text-muted); font-size: 0.85rem; }
+.red-team-status .hint { flex-basis: 100%; margin-top: 0.3rem; }
+
+.red-team-status-completed .red-team-status-value { color: var(--ok); }
+.red-team-status-failed .red-team-status-value,
+.red-team-status-externally-blocked .red-team-status-value { color: var(--danger); }
+.red-team-status-skipped .red-team-status-value,
+.red-team-status-skipped-for-budget .red-team-status-value,
+.red-team-status-configured-off .red-team-status-value,
+.red-team-status-unavailable .red-team-status-value { color: var(--text-muted); }
+
+/* Compact, collapsed-by-default operational trace (see presenter.
+   trace_summary) -- deliberately low in the visual hierarchy: plain counts,
+   never a claim about answer quality. */
+.trace-summary { margin-top: 0.6rem; font-size: 0.85rem; color: var(--text-muted); }
+.trace-summary summary { cursor: pointer; font-weight: 600; }
+.trace-summary-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1.2rem;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
 /* Final-answer headline + collapsible remainder (see split_synthesis_sections
    in web/markdown_render.py -- only used when the structure is confidently
    detected; otherwise the full block renders exactly as before). */

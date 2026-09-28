@@ -60,17 +60,44 @@
     <span>{{ "total_cost_label"|t }}: {{ cost }}</span>
     <span>{{ "duration_label"|t }}: {{ elapsed }}</span>
     <span>{{ "profile_meta_label"|t }}: {{ ("profile_name_" ~ record.profile)|t }}</span>
-    <span>{{ "red_team_meta_label"|t }}: {{ "red_team_on"|t if record.red_team_enabled else "red_team_off"|t }}</span>
   </div>
-  {% if red_team_skipped_for_budget %}
-  {# See presenter.red_team_skipped_for_budget_reserve -- a concise,
-     product-level explanation, kept subtle (a single hint line, not a
-     financial dashboard) per the completion-reserve UI requirements.
-     Never shown for a normally-disabled run (record.red_team_enabled is
-     still True here -- the setting stayed on, only this one run's
-     execution skipped it to protect completion). #}
-  <p class="hint">{{ "red_team_skipped_for_budget_notice"|t }}</p>
-  {% endif %}
+
+  {# Decision Cockpit Phase 1 -- see presenter.red_team_state. A single,
+     truthful status replacing the old on/off-only label: distinct states
+     must never be collapsed (a budget skip is not the same claim as a
+     provider failure, which is not the same claim as an external block). #}
+  <div class="red-team-status red-team-status-{{ red_team_state.status|replace('_', '-') }}">
+    <span class="red-team-status-label">{{ "red_team_status_label"|t }}:</span>
+    <span class="red-team-status-value">{{ ("red_team_state_" ~ red_team_state.status)|t }}</span>
+    {% if red_team_state.status == "externally_blocked" %}
+      <span class="red-team-status-code">(HTTP {{ red_team_state.http_code }})</span>
+      <p class="hint">{{ "red_team_state_externally_blocked_hint"|t }}</p>
+    {% elif red_team_state.status == "skipped_for_budget" %}
+      <p class="hint">{{ "red_team_skipped_for_budget_notice"|t }}</p>
+    {% endif %}
+    {% if red_team_state.status == "completed" and red_team_material_change_count is not none %}
+      {% if red_team_material_change_count > 0 %}
+        <p class="hint">
+          {{ "red_team_referenced_in_changes_prefix"|t }}
+          {{ red_team_material_change_count|count_label("material_change") }}
+        </p>
+      {% else %}
+        <p class="hint">{{ "red_team_not_referenced_in_changes"|t }}</p>
+      {% endif %}
+    {% endif %}
+  </div>
+
+  {# Decision Cockpit Phase 1 -- see presenter.trace_summary. Plain counts
+     only, collapsed by default and placed low in the hierarchy: this is
+     Level 4 operational trace data, not a signal about answer quality. #}
+  <details class="trace-summary">
+    <summary>{{ "trace_summary_heading"|t }}</summary>
+    <ul class="trace-summary-list">
+      <li>{{ trace_summary.logical_stages|count_label("pipeline_stage") }}</li>
+      <li>{{ trace_summary.total_provider_attempts|count_label("provider_attempt") }}</li>
+      <li>{{ trace_summary.stages_with_retry_or_fallback|count_label("stage_with_retry_or_fallback") }}</li>
+    </ul>
+  </details>
 </section>
 
 {% include "partials/convergence_summary.html" %}
