@@ -847,7 +847,7 @@ def test_ui_shows_no_material_changes_and_no_disagreements_explicitly(
     assert "No material disagreements remain." in body
     assert "No shared agreements were identified." in body
     assert "No outstanding unknowns were identified." in body
-    assert "No issues were flagged as requiring human judgement." in body
+    assert "No additional human judgement items were recorded." in body
 
 
 def test_decision_snapshot_shows_correct_counts_for_partial_convergence(

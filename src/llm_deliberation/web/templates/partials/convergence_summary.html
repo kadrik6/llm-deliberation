@@ -36,7 +36,7 @@
   {% endif %}
 </section>
 
-<section class="disagreement-map">
+<section class="disagreement-map" id="disagreement-map">
   <h2>{{ "disagreement_map_heading"|t }}</h2>
   {% if evolution.unresolved_disagreements %}
     {% for d in evolution.unresolved_disagreements %}
@@ -74,7 +74,7 @@
   {% endif %}
 </section>
 
-<section class="remaining-unknowns">
+<section class="remaining-unknowns" id="remaining-unknowns">
   <h2>{{ "remaining_unknowns_heading"|t }}</h2>
   {% if evolution.remaining_unknowns %}
     <ul class="checklist">
@@ -91,17 +91,36 @@
   {% endif %}
 </section>
 
-<section class="human-judgement">
+{# Decision Cockpit Phase 2 -- "You Decide" is a compact INDEX of what
+   still needs a human's judgement, assembled from three already-structured
+   fields (presenter.you_decide_items): unresolved disagreements'
+   decision_impact, human_judgement_required, and remaining_unknowns' why_
+   it_matters. Deliberately NOT a second full-detail copy of the "Where
+   models still disagree" / "What should you find out next?" sections
+   above -- only the "why this matters to a decision" fields are repeated
+   here, reframed via the "Details above" anchor, never presented as new
+   or independent evidence. Category order is fixed (disagreement, human
+   judgement, unknown) and never implies priority or severity. #}
+<section class="human-judgement" id="you-decide">
   <h2>{{ "human_judgement_heading"|t }}</h2>
-  {% if evolution.human_judgement_required %}
+  {% if you_decide_items %}
     <p class="section-intro">{{ "human_judgement_intro"|t }}</p>
-    <ul>
-      {% for h in evolution.human_judgement_required %}
-        <li><strong>{{ h.issue }}:</strong> {{ h.why_models_cannot_resolve_it }}</li>
+    <ul class="you-decide-list">
+      {% for item in you_decide_items %}
+        <li class="you-decide-item you-decide-{{ item.category|replace('_', '-') }}">
+          <span class="you-decide-category">{{ ("you_decide_category_" ~ item.category)|t }}</span>
+          <span class="you-decide-primary">{{ item.primary }}</span>
+          {% if item.detail %}<span class="you-decide-detail">{{ item.detail }}</span>{% endif %}
+          {% if item.category == "disagreement" %}
+            <a class="you-decide-anchor" href="#disagreement-map">{{ "you_decide_see_above"|t }}</a>
+          {% elif item.category == "unknown" %}
+            <a class="you-decide-anchor" href="#remaining-unknowns">{{ "you_decide_see_above"|t }}</a>
+          {% endif %}
+        </li>
       {% endfor %}
     </ul>
   {% else %}
-    <p class="stage-note">{{ "no_human_judgement"|t }}</p>
+    <p class="stage-note">{{ "you_decide_empty_state"|t }}</p>
   {% endif %}
 </section>
 {% endif %}

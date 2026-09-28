@@ -151,6 +151,79 @@ def red_team_material_change_reference_count(evolution) -> int | None:
     )
 
 
+# Decision Cockpit Phase 2 -- see docs/design/decision-cockpit-proposal.md's
+# "You Decide" section (Section 8) and this phase's design audit. A compact
+# INDEX of what still needs a human's judgement, never a second full-detail
+# copy of "Where models still disagree" / "What should you find out next?".
+YOU_DECIDE_DISAGREEMENT = "disagreement"
+YOU_DECIDE_HUMAN_JUDGEMENT = "human_judgement"
+YOU_DECIDE_UNKNOWN = "unknown"
+
+
+def you_decide_items(evolution) -> list[dict]:
+    """Assemble the compact "You Decide" index from three already-
+    structured, already-validated ConvergenceAnalysis fields -- Category A
+    data, pure reordering/relabeling, no summarization model, no new
+    provider call, no semantic interpretation:
+
+    - one item per `unresolved_disagreements[]`, using only `.decision_impact`
+      (never the topic/positions/why_unresolved -- those stay in "Where
+      models still disagree"; repeating them here would make this a second
+      full-detail copy instead of an index);
+    - one item per `human_judgement_required[]`, using `.issue` as the
+      primary line and `.why_models_cannot_resolve_it` as a secondary line;
+    - one item per `remaining_unknowns[]`, using `.unknown` as the primary
+      line (context/label) and `.why_it_matters` as a secondary line (never
+      `.evidence_needed` -- that stays in "What should you find out next?").
+
+    Category order is always disagreement, then human_judgement, then
+    unknown -- fixed and stable, never re-sorted by any inferred priority or
+    severity (no such signal exists anywhere in the schema).
+
+    Every field read here (`decision_impact`, `issue`,
+    `why_models_cannot_resolve_it`, `unknown`, `why_it_matters`) is a
+    required (non-Optional) string on its Pydantic model, and a stage's
+    artifact is only ever persisted after successfully validating against
+    that schema (see convergence.parse_convergence_analysis /
+    mark_stage_succeeded) -- a live 2026 audit of every historical
+    convergence_analysis artifact in this project (5/5 succeeded runs
+    across canary1/canary2/canary2-rerun/deliberation/pilot-case-1-FULL;
+    Case 3 never reached this stage) found zero instances missing any of
+    these five fields. A per-item missing field is therefore not a
+    reachable state today. This function still degrades gracefully rather
+    than assuming that forever: `getattr(..., "")` never raises, an item
+    whose one *primary* field is missing/empty contributes nothing (never a
+    blank placeholder implying content that isn't there), and an item whose
+    *secondary* field is missing/empty still renders with its primary field
+    alone (partial content, not a crash). The only real "missing data" path
+    otherwise is evolution itself being None (convergence_analysis skipped/
+    failed/never ran), which this function does not need to special-case:
+    it is only ever called from a template block already gated on
+    `evolution is not none`, and an empty source list here simply
+    contributes zero items, exactly like every other empty list already
+    does elsewhere on this page.
+    """
+    items: list[dict] = []
+    for d in evolution.unresolved_disagreements:
+        decision_impact = getattr(d, "decision_impact", "") or ""
+        if not decision_impact:
+            continue
+        items.append({"category": YOU_DECIDE_DISAGREEMENT, "primary": decision_impact, "detail": None})
+    for h in evolution.human_judgement_required:
+        issue = getattr(h, "issue", "") or ""
+        if not issue:
+            continue
+        detail = getattr(h, "why_models_cannot_resolve_it", "") or None
+        items.append({"category": YOU_DECIDE_HUMAN_JUDGEMENT, "primary": issue, "detail": detail})
+    for u in evolution.remaining_unknowns:
+        unknown = getattr(u, "unknown", "") or ""
+        if not unknown:
+            continue
+        detail = getattr(u, "why_it_matters", "") or None
+        items.append({"category": YOU_DECIDE_UNKNOWN, "primary": unknown, "detail": detail})
+    return items
+
+
 STATUS_SYMBOLS: dict[str, str] = {
     "pending": "○",  # ○
     "running": "●",  # ●

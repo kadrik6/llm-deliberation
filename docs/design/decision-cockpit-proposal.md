@@ -1,10 +1,12 @@
 # Decision Cockpit — Design & Architecture Proposal
 
-Status: **Phase 1 partially implemented.** See "Phase 1 implementation
-status" immediately below for exactly what changed and what did not. This
-document itself is otherwise unchanged from the original proposal —
-everything below this status block is the original design text, kept
-as-is for reference; it is not a record of what was actually built.
+Status: **Phase 1 and Phase 2 (partially) implemented, not yet human
+UX-tested.** See "Phase 1 implementation status" and "Phase 2
+implementation status" immediately below for exactly what changed and what
+did not. This document itself is otherwise unchanged from the original
+proposal — everything below those status blocks is the original design
+text, kept as-is for reference; it is not a record of what was actually
+built.
 
 ## Phase 1 implementation status
 
@@ -36,7 +38,52 @@ this phase gathered no evidence toward any of these and makes no claim
 about them): that the cockpit improves decision quality, time-to-
 understanding, or calibration versus a text-only view; that a visual
 presentation is better than plain text for this task. Nothing implemented
-this phase was evaluated against these questions.
+this phase was evaluated against these questions. The Decision Snapshot is
+*structurally designed* for rapid scanning (a badge + a handful of short
+stat chips, no interaction required); whether it is actually understood in
+around 10 seconds by a real reader remains an untested UX hypothesis, not
+a measured result.
+
+---
+
+## Phase 2 implementation status
+
+Scope of this pass, per the Phase 2 design audit: **only** "Complete the
+'You Decide' section." No other Phase 2/3 element (progressive disclosure,
+decision-evolution flow diagram, Evaluation Dashboard, constraint-coverage
+matrix, etc.) was touched. No provider calls were made, no evaluation
+data/mapping was touched, no prompt/provider/evaluation-semantics change
+occurred.
+
+| Element | Status | Notes |
+|---|---|---|
+| "You Decide" assembled from all three designed-for fields (§2.5, §8) | **IMPLEMENTED** (this phase) | `presenter.you_decide_items`; previously only `human_judgement_required` was shown — `unresolved_disagreements[].decision_impact` and `remaining_unknowns[].why_it_matters` are now included, each item tagged by a visible text category label |
+| Compact index, not a duplicate detail copy | **IMPLEMENTED** (this phase) | Only one field per source is reused (never topic/positions/why_unresolved/evidence_needed); a "Details above" anchor links each reused item back to its full detail section, framing it as "what to weigh," never as independent new evidence |
+| Fixed, non-inferred category order (disagreement → human judgement → unknown) | **IMPLEMENTED** (this phase) | No priority/severity/confidence signal exists in the schema or was introduced |
+| Honest, narrow empty-state message | **IMPLEMENTED** (this phase) | "No additional human judgement items were recorded." — deliberately not "nothing left to decide" or "no uncertainty remains," which would claim more than an empty list supports |
+| Level-2 progressive disclosure (the five sections are still always fully expanded, on every viewport) | **DEFERRED** | Identified as a real gap in the Phase 2 design audit; explicitly out of scope for this pass per the approval instructions — to be reassessed after this change, not bundled into it |
+| Decision-evolution flow diagram (§5) | **DEFERRED** | Not part of this pass's approved scope |
+
+**Structural UI review only, not human usability testing.** This
+environment has no rendered-browser/screenshot tool. What was actually
+done: the rendered HTML of three existing, non-Case-3 historical runs
+(Canary 1, Canary 2 rerun, Pilot Case 1's FULL production run) was
+inspected for DOM structure, section order, absence of duplicate ids, and
+absence of a duplicated bordered sub-box per category. This confirms the
+markup is well-formed and positioned as intended — it does **not** confirm
+that a human reader finds the page easy to scan, uncluttered, or faster to
+understand than before. No claim of validated visual hierarchy or
+human-tested usability is made anywhere in this document.
+
+**Case 3 status, precisely** (previously stated imprecisely as "unrun"):
+SINGLE/DUAL/CRITIQUE completed live; FULL has no complete result because
+Gemini red-team was externally blocked (HTTP 403) on two genuine attempts;
+blind review has not started; no mapping has been created or revealed; no
+semantic comparison of any Case 3 output has been performed. Nothing in
+Phase 2 touched Case 3 in any way — no Case 3 variant ever reaches
+`convergence_analysis` in the first place (SINGLE/DUAL/CRITIQUE have no
+convergence stage at all; FULL was blocked earlier, at `red_team`), so
+"You Decide" has no Case 3 data to draw from even in principle.
 
 ---
 

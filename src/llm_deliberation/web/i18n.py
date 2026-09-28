@@ -427,15 +427,42 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "evidence_needed_label": {"en": "Evidence needed", "et": "Vajalikud tõendid"},
 
     "human_judgement_heading": {"en": "You decide", "et": "Sina otsustad"},
+    # Decision Cockpit Phase 2 -- "You Decide" is now a compact index over
+    # three source categories (disagreements, human-judgement items,
+    # unknowns), not human_judgement_required alone. Broadened from the
+    # old, narrower intro sentence, which claimed every item was a "values/
+    # risk-appetite" choice -- true of a human-judgement item specifically,
+    # but not necessarily of a disagreement or an unknown (either could in
+    # principle be resolved by more evidence). The new sentence makes no
+    # claim beyond "still needs your judgement", true for all three.
     "human_judgement_intro": {
-        "en": "More analysis cannot resolve these -- they are values, "
-              "risk-appetite, or stakeholder choices only a person can make.",
-        "et": "Rohkem analüüsi ei lahenda neid -- need on väärtused, "
-              "riskivalmidus või osapoolte valikud, mida saab teha vaid inimene.",
+        "en": "Everything below still needs your judgement before acting on "
+              "this answer -- each item is unresolved, unknown, or a call "
+              "the models could not make for you.",
+        "et": "Kõik allolev vajab enne selle vastuse põhjal tegutsemist "
+              "sinu otsust -- iga punkt on kas lahendamata, teadmata või "
+              "valik, mida mudelid sinu eest teha ei saanud.",
     },
-    "no_human_judgement": {
-        "en": "No issues were flagged as requiring human judgement.",
-        "et": "Inimese otsust vajavaid küsimusi ei tuvastatud.",
+    # Category labels for each "You Decide" item -- text-visible, never
+    # color-only (see presenter.you_decide_items / Section 7's terminology
+    # safeguards). Fixed order: disagreement, human_judgement, unknown.
+    "you_decide_category_disagreement": {"en": "Disagreement:", "et": "Erimeelsus:"},
+    "you_decide_category_human_judgement": {"en": "Needs your judgement:", "et": "Vajab sinu otsust:"},
+    "you_decide_category_unknown": {"en": "Open question:", "et": "Lahtine küsimus:"},
+    # Duplication safeguard (Section 3 of the Phase 2 design audit): a
+    # disagreement/unknown item's text also already appears in its own
+    # detailed section earlier on the page. This link reframes it as "what
+    # you still need to weigh", never as new/independent evidence.
+    "you_decide_see_above": {"en": "Details above", "et": "Üksikasjad eespool"},
+    # Shown only when ALL three source categories (disagreements,
+    # human-judgement items, unknowns) are empty. Deliberately a narrow,
+    # literal claim ("nothing was recorded") -- never "nothing left to
+    # decide" or "no uncertainty remains", which would claim more than an
+    # empty list actually supports (convergence is not the same as truth --
+    # see Section 7's terminology safeguards).
+    "you_decide_empty_state": {
+        "en": "No additional human judgement items were recorded.",
+        "et": "Täiendavaid inimese otsust vajavaid punkte ei registreeritud.",
     },
 
     # -- full deliberation trace --------------------------------------------

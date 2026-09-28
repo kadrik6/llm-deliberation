@@ -52,6 +52,7 @@ from llm_deliberation.web.presenter import (
     red_team_material_change_reference_count,
     red_team_state,
     trace_summary,
+    you_decide_items,
 )
 
 WEB_DIR = Path(__file__).parent
@@ -527,6 +528,13 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
                     # -- see red_team_material_change_reference_count's own
                     # "prefer 'not recorded' over a fabricated 0" docstring.
                     "red_team_material_change_count": red_team_material_change_reference_count(evolution),
+                    # Decision Cockpit Phase 2 -- see presenter.you_decide_items.
+                    # Empty list (never None) when evolution is None too:
+                    # the template's existing `{% if evolution is not none %}`
+                    # gate already hides the whole "You Decide" section in
+                    # that case, so this key only needs to answer "what goes
+                    # in the list" when the section renders at all.
+                    "you_decide_items": you_decide_items(evolution) if evolution is not None else [],
                 }
             )
         else:

@@ -669,6 +669,28 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 .checklist-item { font-weight: 600; margin: 0 0 0.2rem; }
 .checklist-detail { color: var(--text-muted); font-size: 0.9rem; margin: 0.1rem 0; }
 
+/* Decision Cockpit Phase 2 -- "You Decide" compact index (see
+   presenter.you_decide_items). Deliberately a plain list, not a card grid
+   like .change-card/.disagreement-card: this is an index over content
+   shown in full detail elsewhere on the page, not a third detailed copy of
+   it. Category label is a text span, never color-only (see the
+   terminology-safeguard table). flex-wrap keeps this narrow-viewport-safe
+   with no horizontal scroll: category + primary share a line where they
+   fit, detail/anchor always wrap to their own full-width line. */
+.you-decide-list { list-style: none; margin: 0; padding: 0; }
+.you-decide-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 0.4rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.you-decide-item:last-child { border-bottom: none; padding-bottom: 0; }
+.you-decide-category { font-weight: 600; white-space: nowrap; }
+.you-decide-detail { color: var(--text-muted); flex-basis: 100%; }
+.you-decide-anchor { font-size: 0.85rem; color: var(--text-muted); flex-basis: 100%; }
+
 .history-table {
   width: 100%;
   border-collapse: collapse;
