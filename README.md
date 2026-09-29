@@ -11,7 +11,9 @@ question isn't just "what does the model recommend," but where independent
 analyses actually differed, what changed once each was challenged, what's
 still unresolved, and what a person still has to decide.
 
-<!-- TODO portfolio screenshot: Decision Snapshot -->
+![Decision Snapshot showing the convergence state and counts of material changes, unresolved disagreements, missing facts, and human-judgement items](docs/images/decision-snapshot.png)
+
+*See the state of the deliberation before reading the final answer.*
 
 ## Why this exists
 
@@ -41,14 +43,18 @@ Below that:
 - **Where models still disagree** — unresolved disagreements shown as two
   positions side by side, not smoothed into one answer.
 
-  <!-- TODO portfolio screenshot: What changed / unresolved disagreement -->
+  ![Two unresolved model positions shown side by side, with why the disagreement remains unresolved and its impact on the decision](docs/images/decision-evolution.png)
+
+  *Disagreement stays visible instead of being silently averaged away.*
 
 - **What's still unknown** — facts that would help resolve something,
   flagged rather than guessed at.
 - **You decide** — a compact index of everything above that still needs a
   human call, so it isn't scattered across five sections.
 
-  <!-- TODO portfolio screenshot: You decide -->
+  ![Excerpt of the You Decide section, listing a remaining disagreement, a human-judgement item, and an open question the system leaves to a person](docs/images/you-decide.png)
+
+  *An excerpt of the questions and judgement calls the system leaves to the human.*
 
 - **Red-team status** — one of several distinct states (ran and referenced
   in changes, skipped, skipped for budget, failed, externally blocked) —
