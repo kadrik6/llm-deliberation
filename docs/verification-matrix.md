@@ -162,6 +162,8 @@ A `YES` in one column never implies a `YES` in another. "Offline verified" does 
 | Current Gemini limitation | BLOCKED by user choice (billing) | See §2 |
 | Blind-review status | **NOT STARTED** | No valid 4-way export exists; the one auto-generated artifact is invalid and unused (see §7) |
 | What must remain uninspected/unblinded | SINGLE/DUAL/CRITIQUE outputs (content), any mapping, any stage-level constraint-detection coding | Deliberately not inspected in this audit — confirmed: this document contains zero semantic commentary on any Case 3 output |
+| Public naming/purpose disclosure | **KNOWN, ACCEPTED RESIDUAL** | `case_id` is public and preserved for reproducibility (changing it would invalidate the three completed experiment references) — it names the general topic but explains nothing on its own. One commit's subject/body (the commit that introduces the sanitized case) additionally names, in general terms, the category of mechanism this case tests. Fixing that would require a second, narrower history rewrite of just that commit's message; not done as part of this audit pending a decision on whether it's worth a second rewrite for wording-only value. None of this reveals the specific constraint, the expected answer shape, or the scoring rubric — see the "Blind-review methodology" note below for how this residual is actually meant to be handled. |
+| Blind-review methodology | **Reviewer-isolation, now explicit** | Case 3's blind reviewer must be given only the randomized blind-review artifact (`build_blind_export`'s output — question/context plus anonymized, unlabeled outputs, seeded mapping kept separate) and the scoring rubric, and must not inspect this repository, its commit history, or any operational/experiment metadata before locking scores — exactly Pilot Case 1's practiced discipline, now stated as an explicit requirement rather than left implicit. The public repository is not required to be fully self-blinding (see the residual row above); reviewer isolation is the operative safeguard. |
 
 ---
 
@@ -192,7 +194,7 @@ A `YES` in one column never implies a `YES` in another. "Offline verified" does 
 - That red-team review improves final-answer quality — its material-change contributions are structurally real, but no evidence connects them to anything the one human reviewer explicitly valued.
 - That convergence (`"converged"`) indicates the answer is correct, only that the models' revised positions agreed with each other.
 - That the Decision Cockpit would improve human decisions — no version of it exists yet, and nothing has tested this.
-- Any conclusion about Case 3 (which architecture handled the flip constraint, or whether deliberation helps on harder cases) — FULL has not run, and no blind review has started.
+- Any conclusion about Case 3 (which architecture handled its compositional constraint most completely, or whether deliberation helps on harder cases) — FULL has not run, and no blind review has started.
 
 ## Remaining evidence gaps (ranked by usefulness, not urgency)
 
