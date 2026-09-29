@@ -719,6 +719,183 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
               "tehisintellekti teenusepakkujatele. Ära lisa infot, mida sa ei "
               "soovi nende teenusepakkujatega jagada.",
     },
+
+    # -- shareable full report (/runs/{id}/report) ---------------------------
+    # A dedicated, self-contained, print-friendly document -- see
+    # web/templates/report.html and presenter.py's report helpers. Built
+    # directly from RunRecord/StageRecord, never from report.py's Markdown-
+    # export path (which is success-only), so this must work correctly for
+    # a failed/incomplete run too -- every key below is written with that in
+    # mind, not just the happy path.
+    "report_full_report_link": {"en": "Full report", "et": "Täisraport"},
+    "report_back_to_run": {"en": "Back to run", "et": "Tagasi käigu juurde"},
+    "report_print_button": {"en": "Print / Save as PDF", "et": "Prindi / salvesta PDF-ina"},
+    "report_title": {"en": "LLM Deliberation Report", "et": "LLM arutelu raport"},
+    "report_generated_label": {"en": "Report generated", "et": "Raport genereeritud"},
+    "report_privacy_notice": {
+        "en": "This report includes the original question and context exactly "
+              "as provided, along with the full deliberation trace. Share it "
+              "only with people authorized to see that information.",
+        "et": "See raport sisaldab algset küsimust ja konteksti täpselt nii, "
+              "nagu need esitati, koos kogu arutelu käiguga. Jaga seda ainult "
+              "inimestega, kellel on õigus seda infot näha.",
+    },
+    "report_question_heading": {"en": "Question", "et": "Küsimus"},
+    "report_context_heading": {"en": "Context", "et": "Kontekst"},
+    "report_no_context": {
+        "en": "No additional context was provided.",
+        "et": "Lisakonteksti ei esitatud.",
+    },
+    "report_how_produced_heading": {
+        "en": "How this report was produced", "et": "Kuidas see raport valmis",
+    },
+    "report_how_produced_step1": {
+        "en": "Two independent analyses of your question.",
+        "et": "Sinu küsimusele kaks sõltumatut analüüsi.",
+    },
+    "report_how_produced_step2": {
+        "en": "Each analysis is cross-critiqued by the other.",
+        "et": "Kumbki analüüs saab teiselt kriitika.",
+    },
+    "report_how_produced_step3": {
+        "en": "An optional third pass looks for blind spots the first two might share.",
+        "et": "Valikuline kolmas läbimine otsib pimealasid, mis mõlemal esimesel võivad ühised olla.",
+    },
+    "report_how_produced_step4": {
+        "en": "Both positions are revised in light of that critique.",
+        "et": "Mõlemat seisukohta täiendatakse saadud kriitika põhjal.",
+    },
+    "report_how_produced_step5": {
+        "en": "What changed, and what remains unresolved, is compared explicitly.",
+        "et": "Mis muutus ja mis jäi lahendamata, võrreldakse selgesõnaliselt.",
+    },
+    "report_how_produced_step6": {
+        "en": "A final answer is produced, informed by that comparison.",
+        "et": "Selle võrdluse põhjal koostatakse lõppvastus.",
+    },
+    "report_how_produced_note1": {
+        "en": "Agreement between the two analyses is not proof either is correct.",
+        "et": "Kahe analüüsi kokkulangevus ei tõenda, et kumbki on õige.",
+    },
+    "report_how_produced_note2": {
+        "en": "This process does not replace human judgement -- it is meant to inform it.",
+        "et": "See protsess ei asenda inimese otsust -- see on mõeldud seda toetama.",
+    },
+    "report_how_produced_note3": {
+        "en": "Unresolved issues are intentionally left visible below, not smoothed over.",
+        "et": "Lahendamata küsimused on allpool tahtlikult nähtavad, mitte silutud.",
+    },
+    "report_no_final_answer": {
+        "en": "No final answer was produced because this run did not complete.",
+        "et": "Lõppvastust ei koostatud, kuna see käik ei lõppenud.",
+    },
+    "report_no_final_answer_note": {
+        "en": "The evidence produced before this run stopped is still included below.",
+        "et": "Enne käigu peatumist tekkinud tõendusmaterjal on siiski allpool.",
+    },
+    "report_what_changed_not_recorded": {
+        "en": "Not recorded -- change/convergence analysis did not run for this deliberation.",
+        "et": "Andmed puuduvad -- muutuste ja konsensuse analüüs seda arutelu jaoks ei toimunud.",
+    },
+    "report_disagreements_not_recorded": {
+        "en": "Not recorded -- change/convergence analysis did not run for this deliberation.",
+        "et": "Andmed puuduvad -- muutuste ja konsensuse analüüs seda arutelu jaoks ei toimunud.",
+    },
+    "report_agreements_not_recorded": {
+        "en": "Not recorded -- change/convergence analysis did not run for this deliberation.",
+        "et": "Andmed puuduvad -- muutuste ja konsensuse analüüs seda arutelu jaoks ei toimunud.",
+    },
+    "report_unknowns_not_recorded": {
+        "en": "Not recorded -- change/convergence analysis did not run for this deliberation.",
+        "et": "Andmed puuduvad -- muutuste ja konsensuse analüüs seda arutelu jaoks ei toimunud.",
+    },
+    "report_you_decide_not_recorded": {
+        "en": "Not recorded -- change/convergence analysis did not run for this deliberation.",
+        "et": "Andmed puuduvad -- muutuste ja konsensuse analüüs seda arutelu jaoks ei toimunud.",
+    },
+    "report_run_summary_heading": {"en": "Run summary", "et": "Käigu kokkuvõte"},
+    "report_total_input_tokens_label": {"en": "Total input tokens", "et": "Sisendmärke kokku"},
+    "report_total_output_tokens_label": {"en": "Total output tokens", "et": "Väljundmärke kokku"},
+    "report_not_recorded": {"en": "Not recorded", "et": "Andmed puuduvad"},
+    "report_interpret_heading": {
+        "en": "How to interpret this report", "et": "Kuidas seda raportit tõlgendada",
+    },
+    "report_interpret_1": {
+        "en": "Agreement between models is not the same as truth.",
+        "et": "Mudelite omavaheline kokkulangevus ei ole sama mis tõde.",
+    },
+    "report_interpret_2": {
+        "en": "Convergence describes whether positions agreed, not whether they are correct.",
+        "et": "Konsensus kirjeldab, kas seisukohad langesid kokku, mitte kas need on õiged.",
+    },
+    "report_interpret_3": {
+        "en": "A material change is a recorded position change, not automatically an improvement.",
+        "et": "Sisuline muutus on registreeritud seisukohamuutus, mitte automaatselt paranemine.",
+    },
+    "report_interpret_4": {
+        "en": "Red-team participation in a change does not mean it caught a factual error.",
+        "et": "Punase meeskonna panus muutusesse ei tähenda, et see tabas sisulise vea.",
+    },
+    "report_interpret_5": {
+        "en": "More model calls do not automatically mean a better answer.",
+        "et": "Rohkem mudelikutseid ei tähenda automaatselt paremat vastust.",
+    },
+    "report_interpret_6": {
+        "en": "Higher cost does not mean higher quality.",
+        "et": "Suurem maksumus ei tähenda kõrgemat kvaliteeti.",
+    },
+    "report_interpret_7": {
+        "en": "Unresolved items may require external evidence or a human judgement call this report cannot make for you.",
+        "et": "Lahendamata punktid võivad vajada välist tõendusmaterjali või inimese otsust, mida see raport sinu eest teha ei saa.",
+    },
+    "report_appendix_heading": {
+        "en": "Technical appendix — complete deliberation trace",
+        "et": "Tehniline lisa — kogu arutelu käik",
+    },
+    "report_appendix_note": {
+        "en": "The sections below reproduce the persisted stage outputs and "
+              "operational metadata used to produce this report.",
+        "et": "Allolevad jaotised kajastavad salvestatud etappide väljundeid ja "
+              "tehnilisi andmeid, mille põhjal see raport koostati.",
+    },
+    "report_run_identifiers_heading": {
+        "en": "Run identifiers & timestamps", "et": "Käigu tunnused ja ajatemplid",
+    },
+    "report_created_label": {"en": "Created", "et": "Loodud"},
+    "report_started_label": {"en": "Started", "et": "Alustatud"},
+    "report_completed_label": {"en": "Completed", "et": "Lõpetatud"},
+    "report_stage_duration_label": {"en": "Stage duration", "et": "Etapi kestus"},
+    "report_language_contract_heading": {
+        "en": "Language-contract diagnostics", "et": "Töökeele lepingu diagnostika",
+    },
+    "report_language_contract_requested_label": {
+        "en": "Requested working language", "et": "Soovitud töökeel",
+    },
+    "report_language_contract_observed_label": {
+        "en": "Observed language", "et": "Tuvastatud keel",
+    },
+    "report_language_contract_status_label": {
+        "en": "Contract status", "et": "Lepingu olek",
+    },
+    "report_language_contract_recovery_label": {
+        "en": "Corrective retry attempted", "et": "Parandav uus katse tehtud",
+    },
+    "report_stage_not_run": {"en": "This stage did not run.", "et": "See etapp ei käivitunud."},
+    "report_stage_skipped_text": {
+        "en": "This stage was skipped.", "et": "See etapp jäeti vahele.",
+    },
+    "report_stage_failed_text": {
+        "en": "This stage failed.", "et": "See etapp ebaõnnestus.",
+    },
+    "report_stage_unavailable_text": {
+        "en": "This stage's output is unavailable.",
+        "et": "Selle etapi väljund pole saadaval.",
+    },
+    "provider_label": {"en": "Provider", "et": "Pakkuja"},
+    "input_tokens_label": {"en": "Input tokens", "et": "Sisendmärgid"},
+    "output_tokens_label": {"en": "Output tokens", "et": "Väljundmärgid"},
+    "estimated_cost_label": {"en": "Estimated cost", "et": "Hinnanguline maksumus"},
+    "attempts_label": {"en": "Attempts", "et": "Katsed"},
 }
 
 

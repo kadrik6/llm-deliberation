@@ -38,9 +38,11 @@ from llm_deliberation.web.presenter import (
     ARTIFACT_SECTIONS,
     PROFILE_BLURB_KEYS,
     PROFILE_ORDER,
+    REPORT_STAGE_SECTIONS,
     artifact_language_tags,
     attempt_log_phases,
     build_pipeline,
+    completed_stage_duration_seconds,
     compute_deliberation_quality,
     elapsed_seconds,
     format_datetime,
@@ -51,6 +53,7 @@ from llm_deliberation.web.presenter import (
     is_terminal_run_status,
     red_team_material_change_reference_count,
     red_team_state,
+    run_token_totals,
     trace_summary,
     you_decide_items,
 )
@@ -189,6 +192,10 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
     templates.env.filters["split_sections"] = split_synthesis_sections
     templates.env.filters["group_attempts_by_model"] = group_attempts_by_model
     templates.env.filters["attempt_log_phases"] = attempt_log_phases
+    # Used by the shareable report's per-stage duration cells (see
+    # report.html) -- not previously a registered filter since every other
+    # caller of format_duration builds its string in Python, in the route.
+    templates.env.filters["format_duration"] = format_duration
 
     @jinja2.pass_context
     def _translate_filter(context: jinja2.runtime.Context, key: str) -> str:
@@ -671,6 +678,65 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
                 "Content-Disposition": f'attachment; filename="deliberation-{run_id}.md"'
             },
         )
+
+    @app.get("/runs/{run_id}/report", response_class=HTMLResponse)
+    async def run_report(request: Request, run_id: str):
+        """A dedicated, self-contained, print-friendly report -- everything
+        needed to understand the run in one page, nothing behind a
+        <details> or requiring JS to reveal.
+
+        Deliberately built directly from RunRecord/StageRecord + the
+        presenter layer, NEVER from report.py/service.to_run_result(): that
+        path is the CLI/Markdown-export path, requires every non-optional
+        stage to have already succeeded, and raises ValueError (-> this
+        route would otherwise have to return 409) for anything else. This
+        route must render a truthful report for a failed or incomplete run
+        too -- see report.html's per-stage "not run"/"skipped"/"failed"
+        handling -- so it reads record.stages directly instead, exactly the
+        way the live pipeline view (build_pipeline, below in this same
+        module) already does for a non-succeeded run. A future refactor
+        must not "simplify" this by swapping in report.render_markdown.
+        """
+        svc: DeliberationService = request.app.state.service
+        try:
+            record = svc.get_run(run_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Run not found")
+
+        stages_by_name = {s.name: s for s in record.stages}
+        evolution = None
+        convergence_stage = stages_by_name.get("convergence_analysis")
+        if (
+            convergence_stage is not None
+            and convergence_stage.status == "succeeded"
+            and convergence_stage.text
+        ):
+            evolution = convergence.parse_convergence_analysis(convergence_stage.text)
+
+        context = {
+            "ui_lang": _ui_lang(request),
+            "record": record,
+            "stages_by_name": stages_by_name,
+            "report_stage_sections": REPORT_STAGE_SECTIONS,
+            "quality": compute_deliberation_quality(record),
+            "red_team_state": red_team_state(record),
+            "trace_summary": trace_summary(record),
+            "token_totals": run_token_totals(record),
+            "elapsed": format_duration(elapsed_seconds(record)),
+            "stage_durations": {
+                name: completed_stage_duration_seconds(stage)
+                for name, stage in stages_by_name.items()
+            },
+            "evolution": evolution,
+            "you_decide_items": you_decide_items(evolution) if evolution is not None else [],
+            "red_team_material_change_count": red_team_material_change_reference_count(evolution),
+            # Report-generation time, distinct from the run's own
+            # created_at/started_at/completed_at (see report.html's cover) --
+            # a plain, clearly-labeled "when was this HTML rendered" fact,
+            # not a claim about the run itself.
+            "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        }
+        return templates.TemplateResponse(request, "report.html", context)
 
     @app.get("/history", response_class=HTMLResponse)
     async def history(request: Request):

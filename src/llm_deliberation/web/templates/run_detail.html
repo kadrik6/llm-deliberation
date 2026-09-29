@@ -46,6 +46,14 @@
     {{ "working_language_note_body"|t }}
   </p>
   {% endif %}
+  {% if not live_updates %}
+  {# Terminal run only (succeeded or failed) -- a still-running/pending run
+     has nothing final to report yet. Works for a failed run too (see
+     web/app.py's run_report route), not just a succeeded one. #}
+  <p class="report-entry-point">
+    <a href="/runs/{{ record.id }}/report">{{ "report_full_report_link"|t }}</a>
+  </p>
+  {% endif %}
   {% if budget_blocked %}
   <div class="notice notice-warning">
     <p>{{ "run_budget_exceeded_notice"|t }}</p>

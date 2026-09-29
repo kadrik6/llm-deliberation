@@ -284,6 +284,17 @@ ARTIFACT_SECTIONS: tuple[tuple[str, str], ...] = (
     ("convergence_analysis", "artifact_convergence_analysis"),
 )
 
+# Shareable report (Part II full trace) -- the same 9 logical stages in
+# their real pipeline order (matches orchestrator.ALL_STAGE_NAMES exactly),
+# unlike ARTIFACT_SECTIONS above, which deliberately excludes synthesis
+# (shown separately, as the dominant "final answer", in the interactive
+# UI). The report shows every stage in one flat sequence instead, so
+# synthesis is included here, reusing the same heading key already used
+# for its stage-group title elsewhere.
+REPORT_STAGE_SECTIONS: tuple[tuple[str, str], ...] = ARTIFACT_SECTIONS + (
+    ("synthesis", "stage_group_synthesis"),
+)
+
 # Skip-button i18n key per skippable stage (see SKIPPABLE_STAGE_NAMES),
 # translated in the template via |t. Stages not listed here never show a
 # skip button at all.
@@ -456,6 +467,33 @@ def stage_elapsed_seconds(stage: StageRecord) -> float | None:
     just wall-clock time since the stage started.
     """
     return _elapsed_since(stage.started_at, stage.completed_at)
+
+
+def completed_stage_duration_seconds(stage: StageRecord) -> float | None:
+    """How long a *finished* stage actually took -- distinct from
+    stage_elapsed_seconds, which only measures a still-running stage's
+    "so far" time. Returns None (never a fabricated duration) for a stage
+    that has no completed_at yet -- pending, still running, or a row that
+    was never reached at all -- so callers can render "Not recorded"
+    instead of a misleading number (see the shareable-report route, which
+    is the first caller that needs a *finished* per-stage duration; the
+    live pipeline view only ever needed the "still running" half above).
+    """
+    if not stage.completed_at:
+        return None
+    return _elapsed_since(stage.started_at, stage.completed_at)
+
+
+def run_token_totals(record: RunRecord) -> dict:
+    """Deterministic sum of input/output tokens across every persisted
+    stage row. Never "not recorded": a stage that never ran genuinely
+    contributes 0 (its StageRecord token columns default to 0 -- a true,
+    meaningful zero, not a missing-data gap), so a plain sum is always
+    correct, including for a run with zero or only-pending stages."""
+    return {
+        "input_tokens": sum(s.input_tokens for s in record.stages),
+        "output_tokens": sum(s.output_tokens for s in record.stages),
+    }
 
 
 def format_duration(seconds: float | None) -> str:

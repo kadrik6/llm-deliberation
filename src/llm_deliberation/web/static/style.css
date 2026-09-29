@@ -810,3 +810,170 @@ code {
   margin: 0.3rem 0 0;
   font-weight: 600;
 }
+
+/* ======================================================================
+   Shareable full report (/runs/{id}/report) -- see report_base.html /
+   report.html. Deliberately its own dedicated page, not a themed variant
+   of the interactive result page: no topbar, no <details>, nothing that
+   needs JS to reveal. Reuses every existing token/component class already
+   defined above (decision-snapshot, convergence-badge, change-card,
+   disagreement-card, checklist, you-decide-*, red-team-status*,
+   quality-indicator*, markdown-body, raw-json) so this section only adds
+   what's genuinely new: page-level layout, the cover, and plain tables.
+   ====================================================================== */
+
+.report-body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  line-height: 1.55;
+}
+
+.report-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.85rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  position: sticky;
+  top: 0;
+}
+.report-actions a { color: var(--accent); text-decoration: none; }
+.report-actions a:hover { text-decoration: underline; }
+.report-actions button {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border: none;
+  border-radius: 6px;
+  padding: 0.5rem 1rem;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.report {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 1.5rem 1.5rem 4rem;
+}
+
+.report-cover { margin-bottom: 2rem; }
+.report-cover h1 { margin: 0 0 1rem; font-size: 1.6rem; }
+.report-cover-meta { margin-bottom: 1rem; }
+.report-privacy-notice {
+  background: var(--danger-bg);
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  color: var(--text);
+  font-size: 0.92rem;
+  margin: 0;
+}
+
+.report-section {
+  border-top: 1px solid var(--border);
+  padding-top: 1.25rem;
+  margin-top: 1.5rem;
+}
+.report-section h2 { font-size: 1.15rem; margin: 0 0 0.75rem; }
+.report-section h3 { font-size: 1.05rem; margin: 0 0 0.6rem; }
+.report-section h4 { font-size: 0.95rem; margin: 0.9rem 0 0.4rem; color: var(--text-muted); }
+
+.report-question-text, .report-context-text {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.report-steps { margin: 0 0 0.75rem; padding-left: 1.4em; }
+.report-steps li { margin: 0.3em 0; }
+.report-notes-list {
+  margin: 0;
+  padding-left: 1.4em;
+  color: var(--text-muted);
+  font-size: 0.92rem;
+}
+.report-notes-list li { margin: 0.3em 0; }
+
+.report-missing-answer {
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.report-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+  margin-bottom: 0.5rem;
+}
+.report-table th, .report-table td {
+  text-align: left;
+  padding: 0.35rem 0.6rem 0.35rem 0;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.report-table th {
+  color: var(--text-muted);
+  font-weight: 600;
+  white-space: nowrap;
+  width: 1%;
+}
+
+.report-appendix-divider {
+  margin-top: 2.5rem;
+  padding-top: 1.5rem;
+  border-top: 3px solid var(--text);
+}
+.report-appendix-divider h2 { margin: 0 0 0.35rem; }
+
+.report-stage-artifact { break-inside: avoid-page; page-break-inside: avoid; }
+.report-attempts, .report-language-contract { margin-top: 0.75rem; }
+.report-attempt-entry { margin: 0.25rem 0; font-size: 0.9rem; }
+
+.report-entry-point { margin: 0.5rem 0 0; }
+
+/* ---- Print ------------------------------------------------------------ */
+
+@media print {
+  .report-actions { display: none; }
+
+  @page {
+    size: A4;
+    margin: 20mm;
+  }
+
+  html, body.report-body {
+    background: #fff;
+    font-size: 10.5pt;
+    line-height: 1.45;
+  }
+
+  .report {
+    max-width: none;
+    padding: 0;
+  }
+
+  h1, h2, h3, h4 {
+    break-after: avoid-page;
+    page-break-after: avoid;
+  }
+
+  .change-card, .disagreement-card, .report-stage-artifact,
+  .decision-snapshot, .quality-indicator, .red-team-status {
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  table, tr { break-inside: avoid-page; page-break-inside: avoid; }
+
+  /* No horizontal scrollbar exists on paper -- anything that relies on
+     overflow-x: auto on screen must wrap instead, or content past the
+     page's right edge is simply lost. */
+  .markdown-body table, .raw-json, .markdown-body pre {
+    overflow-x: visible;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  a[href]::after { content: ""; } /* no URL suffixes printed */
+}

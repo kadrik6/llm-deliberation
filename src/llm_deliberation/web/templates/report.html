@@ -1,0 +1,380 @@
+{% extends "report_base.html" %}
+{% block title %}{{ "report_title"|t }} — {{ record.id }}{% endblock %}
+{% block content %}
+<div class="report-actions">
+  <a href="/runs/{{ record.id }}">&larr; {{ "report_back_to_run"|t }}</a>
+  <button type="button" onclick="window.print()">{{ "report_print_button"|t }}</button>
+</div>
+
+<article class="report">
+  <header class="report-cover">
+    <h1>{{ "report_title"|t }}</h1>
+    <table class="report-table report-cover-meta">
+      <tbody>
+        <tr><th>{{ "run_id_label"|t }}</th><td><code>{{ record.id }}</code></td></tr>
+        <tr><th>{{ "status_label"|t }}</th><td>{{ ("status_" ~ record.status)|t }}</td></tr>
+        <tr><th>{{ "profile_meta_label"|t }}</th><td>{{ ("profile_name_" ~ record.profile)|t }}</td></tr>
+        <tr><th>{{ "report_created_label"|t }}</th><td>{{ record.created_at|fmt_datetime }}</td></tr>
+        {% if record.completed_at %}
+        <tr><th>{{ "report_completed_label"|t }}</th><td>{{ record.completed_at|fmt_datetime }}</td></tr>
+        {% endif %}
+        <tr><th>{{ "report_generated_label"|t }}</th><td>{{ generated_at }}</td></tr>
+      </tbody>
+    </table>
+    <p class="report-privacy-notice">{{ "report_privacy_notice"|t }}</p>
+  </header>
+
+  <!-- ==================== PART I -- DECISION REPORT ==================== -->
+
+  <section class="report-section">
+    <h2>{{ "report_question_heading"|t }}</h2>
+    <p class="report-question-text">{{ record.question }}</p>
+  </section>
+
+  <section class="report-section">
+    <h2>{{ "report_context_heading"|t }}</h2>
+    {% if record.context %}
+      <p class="report-context-text">{{ record.context }}</p>
+    {% else %}
+      <p class="stage-note">{{ "report_no_context"|t }}</p>
+    {% endif %}
+  </section>
+
+  <section class="report-section">
+    <h2>{{ "report_how_produced_heading"|t }}</h2>
+    <ol class="report-steps">
+      <li>{{ "report_how_produced_step1"|t }}</li>
+      <li>{{ "report_how_produced_step2"|t }}</li>
+      <li>{{ "report_how_produced_step3"|t }}</li>
+      <li>{{ "report_how_produced_step4"|t }}</li>
+      <li>{{ "report_how_produced_step5"|t }}</li>
+      <li>{{ "report_how_produced_step6"|t }}</li>
+    </ol>
+    <ul class="report-notes-list">
+      <li>{{ "report_how_produced_note1"|t }}</li>
+      <li>{{ "report_how_produced_note2"|t }}</li>
+      <li>{{ "report_how_produced_note3"|t }}</li>
+    </ul>
+  </section>
+
+  <section class="report-section">
+    <h2>{{ "decision_snapshot_label"|t }}</h2>
+    {% include "partials/quality_indicator.html" %}
+    <div class="decision-snapshot">
+      {% if evolution is none %}
+        <p class="convergence-badge convergence-unavailable">{{ "convergence_unavailable_badge"|t }}</p>
+        <p class="stage-note">{{ "convergence_unavailable_message"|t }}</p>
+      {% else %}
+        <p class="convergence-badge convergence-{{ evolution.convergence|replace('_', '-') }}">
+          {{ ("convergence_" ~ evolution.convergence)|t }}
+        </p>
+        <ul class="snapshot-counts">
+          {% set material_count = evolution.material_changes|selectattr("material")|list|length %}
+          <li><strong>{{ material_count|count_label("material_change") }}</strong></li>
+          {% set disagreement_count = evolution.unresolved_disagreements|length %}
+          <li><strong>{{ disagreement_count|count_label("unresolved_disagreement") }}</strong></li>
+          {% set unknown_count = evolution.remaining_unknowns|length %}
+          <li><strong>{{ unknown_count|count_label("missing_fact") }}</strong></li>
+          {% set judgement_count = evolution.human_judgement_required|length %}
+          <li><strong>{{ judgement_count|count_label("human_judgement_item") }}</strong></li>
+        </ul>
+      {% endif %}
+    </div>
+    <div class="red-team-status red-team-status-{{ red_team_state.status|replace('_', '-') }}">
+      <span class="red-team-status-label">{{ "red_team_status_label"|t }}:</span>
+      <span class="red-team-status-value">{{ ("red_team_state_" ~ red_team_state.status)|t }}</span>
+      {% if red_team_state.status == "externally_blocked" %}
+        <span class="red-team-status-code">(HTTP {{ red_team_state.http_code }})</span>
+        <p class="hint">{{ "red_team_state_externally_blocked_hint"|t }}</p>
+      {% elif red_team_state.status == "skipped_for_budget" %}
+        <p class="hint">{{ "red_team_skipped_for_budget_notice"|t }}</p>
+      {% endif %}
+      {% if red_team_state.status == "completed" and red_team_material_change_count is not none %}
+        {% if red_team_material_change_count > 0 %}
+          <p class="hint">{{ "red_team_referenced_in_changes_prefix"|t }} {{ red_team_material_change_count|count_label("material_change") }}</p>
+        {% else %}
+          <p class="hint">{{ "red_team_not_referenced_in_changes"|t }}</p>
+        {% endif %}
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="report-section">
+    <h2>{{ "final_answer_heading"|t }}</h2>
+    {% set synthesis_stage = stages_by_name.get("synthesis") %}
+    {% if synthesis_stage and synthesis_stage.status == "succeeded" and synthesis_stage.text %}
+      <div class="markdown-body">{{ synthesis_stage.text|render_markdown }}</div>
+    {% else %}
+      <p class="report-missing-answer">{{ "report_no_final_answer"|t }}</p>
+      <p class="hint">{{ "report_no_final_answer_note"|t }}</p>
+    {% endif %}
+  </section>
+
+  <section class="report-section what-changed">
+    <h2>{{ "what_changed_heading"|t }}</h2>
+    {% if evolution is none %}
+      <p class="stage-note">{{ "report_what_changed_not_recorded"|t }}</p>
+    {% elif evolution.material_changes %}
+      {% for candidate, changes in evolution.material_changes|groupby("candidate") %}
+        <div class="candidate-changes">
+          <p class="change-candidate">{{ "candidate_label"|t }} {{ candidate }}</p>
+          {% for change in changes %}
+            <div class="change-card is-{{ change.change_status|replace('_', '-') }}">
+              <div class="change-positions">
+                <div class="change-before">
+                  <span class="change-position-label">{{ "before_label"|t }}</span>
+                  <p>{{ change.before }}</p>
+                </div>
+                <div class="change-arrow" aria-hidden="true">&rarr;</div>
+                <div class="change-after">
+                  <span class="change-position-label">{{ "after_label"|t }}</span>
+                  <p>{{ change.after }}</p>
+                </div>
+              </div>
+              {% if change.triggers %}
+                <p class="change-trigger">
+                  <strong>{{ ("triggers_label" if change.triggers|length > 1 else "trigger_label")|t }}:</strong>
+                  {%- for t in change.triggers %}
+                    {{ t.summary }}{% if t.source == "uncertain" %} {{ "cause_uncertain"|t }}{% endif %}{% if not loop.last %};{% endif %}
+                  {%- endfor %}
+                </p>
+              {% endif %}
+              <p class="change-material"><strong>{{ "material_change_label"|t }}:</strong> {{ "yes_label"|t if change.change_status == "material" else ("no_label"|t if change.change_status == "non_material" else "unknown_evidence_label"|t) }}</p>
+            </div>
+          {% endfor %}
+        </div>
+      {% endfor %}
+    {% else %}
+      <p class="stage-note">{{ "no_material_changes"|t }}</p>
+    {% endif %}
+  </section>
+
+  <section class="report-section disagreement-map">
+    <h2>{{ "disagreement_map_heading"|t }}</h2>
+    {% if evolution is none %}
+      <p class="stage-note">{{ "report_disagreements_not_recorded"|t }}</p>
+    {% elif evolution.unresolved_disagreements %}
+      {% for d in evolution.unresolved_disagreements %}
+        <div class="disagreement-card">
+          <p class="disagreement-topic">{{ d.topic }}</p>
+          <div class="disagreement-positions">
+            <div class="disagreement-position">
+              <span class="change-position-label">{{ "candidate_label"|t }} A</span>
+              <p>{{ d.candidate_a_position }}</p>
+            </div>
+            <div class="disagreement-position">
+              <span class="change-position-label">{{ "candidate_label"|t }} B</span>
+              <p>{{ d.candidate_b_position }}</p>
+            </div>
+          </div>
+          <p><strong>{{ "why_unresolved_label"|t }}:</strong> {{ d.why_unresolved }}</p>
+          <p><strong>{{ "decision_impact_label"|t }}:</strong> {{ d.decision_impact }}</p>
+        </div>
+      {% endfor %}
+    {% else %}
+      <p class="stage-note">{{ "no_disagreements"|t }}</p>
+    {% endif %}
+  </section>
+
+  <section class="report-section agreements">
+    <h2>{{ "agreements_heading"|t }}</h2>
+    {% if evolution is none %}
+      <p class="stage-note">{{ "report_agreements_not_recorded"|t }}</p>
+    {% elif evolution.agreements_reached %}
+      <ul>
+        {% for a in evolution.agreements_reached %}
+          <li><strong>{{ a.topic }}:</strong> {{ a.shared_position }}</li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="stage-note">{{ "no_agreements"|t }}</p>
+    {% endif %}
+  </section>
+
+  <section class="report-section remaining-unknowns">
+    <h2>{{ "remaining_unknowns_heading"|t }}</h2>
+    {% if evolution is none %}
+      <p class="stage-note">{{ "report_unknowns_not_recorded"|t }}</p>
+    {% elif evolution.remaining_unknowns %}
+      <ul class="checklist">
+        {% for u in evolution.remaining_unknowns %}
+          <li>
+            <p class="checklist-item">{{ u.unknown }}</p>
+            <p class="checklist-detail"><strong>{{ "why_it_matters_label"|t }}:</strong> {{ u.why_it_matters }}</p>
+            <p class="checklist-detail"><strong>{{ "evidence_needed_label"|t }}:</strong> {{ u.evidence_needed }}</p>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="stage-note">{{ "no_unknowns"|t }}</p>
+    {% endif %}
+  </section>
+
+  <section class="report-section human-judgement">
+    <h2>{{ "human_judgement_heading"|t }}</h2>
+    {% if evolution is none %}
+      <p class="stage-note">{{ "report_you_decide_not_recorded"|t }}</p>
+    {% elif you_decide_items %}
+      <p class="section-intro">{{ "human_judgement_intro"|t }}</p>
+      <ul class="you-decide-list">
+        {% for item in you_decide_items %}
+          <li class="you-decide-item you-decide-{{ item.category|replace('_', '-') }}">
+            <span class="you-decide-category">{{ ("you_decide_category_" ~ item.category)|t }}</span>
+            <span class="you-decide-primary">{{ item.primary }}</span>
+            {% if item.detail %}<span class="you-decide-detail">{{ item.detail }}</span>{% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="stage-note">{{ "you_decide_empty_state"|t }}</p>
+    {% endif %}
+  </section>
+
+  <section class="report-section report-run-summary">
+    <h2>{{ "report_run_summary_heading"|t }}</h2>
+    <table class="report-table">
+      <tbody>
+        <tr><th>{{ "duration_label"|t }}</th><td>{{ elapsed }}</td></tr>
+        <tr><th>{{ "total_cost_label"|t }}</th><td>${{ "%.4f"|format(record.estimated_total_cost_usd) }}</td></tr>
+        <tr><th>{{ "report_total_input_tokens_label"|t }}</th><td>{{ "{:,}".format(token_totals.input_tokens) }}</td></tr>
+        <tr><th>{{ "report_total_output_tokens_label"|t }}</th><td>{{ "{:,}".format(token_totals.output_tokens) }}</td></tr>
+        <tr><th>{{ "trace_summary_heading"|t }}</th>
+          <td>
+            {{ trace_summary.logical_stages|count_label("pipeline_stage") }}
+            &middot; {{ trace_summary.total_provider_attempts|count_label("provider_attempt") }}
+            &middot; {{ trace_summary.stages_with_retry_or_fallback|count_label("stage_with_retry_or_fallback") }}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="report-section report-interpret">
+    <h2>{{ "report_interpret_heading"|t }}</h2>
+    <ul>
+      <li>{{ "report_interpret_1"|t }}</li>
+      <li>{{ "report_interpret_2"|t }}</li>
+      <li>{{ "report_interpret_3"|t }}</li>
+      <li>{{ "report_interpret_4"|t }}</li>
+      <li>{{ "report_interpret_5"|t }}</li>
+      <li>{{ "report_interpret_6"|t }}</li>
+      <li>{{ "report_interpret_7"|t }}</li>
+    </ul>
+  </section>
+
+  <!-- ================ PART II -- TECHNICAL APPENDIX ================ -->
+
+  <div class="report-appendix-divider">
+    <h2>{{ "report_appendix_heading"|t }}</h2>
+    <p class="hint">{{ "report_appendix_note"|t }}</p>
+  </div>
+
+  <section class="report-section report-run-identifiers">
+    <h2>{{ "report_run_identifiers_heading"|t }}</h2>
+    <table class="report-table">
+      <tbody>
+        <tr><th>{{ "run_id_label"|t }}</th><td><code>{{ record.id }}</code></td></tr>
+        <tr><th>{{ "report_created_label"|t }}</th><td>{{ record.created_at|fmt_datetime }}</td></tr>
+        <tr><th>{{ "report_started_label"|t }}</th>
+          <td>{{ record.started_at|fmt_datetime if record.started_at else "report_not_recorded"|t }}</td></tr>
+        <tr><th>{{ "report_completed_label"|t }}</th>
+          <td>{{ record.completed_at|fmt_datetime if record.completed_at else "report_not_recorded"|t }}</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  {% for name, label_key in report_stage_sections %}
+    {% set stage = stages_by_name.get(name) %}
+    <section class="report-section report-stage-artifact">
+      <h3>{{ label_key|t }}</h3>
+      {% if stage is none %}
+        <p class="stage-note">{{ ("red_team_state_" ~ red_team_state.status)|t if name == "red_team" else "report_stage_not_run"|t }}</p>
+      {% else %}
+        <table class="report-table report-stage-meta">
+          <tbody>
+            <tr><th>{{ "status_label"|t }}</th><td>{{ ("status_" ~ stage.status)|t }}</td></tr>
+            {% if stage.provider %}<tr><th>{{ "provider_label"|t }}</th><td>{{ stage.provider }}</td></tr>{% endif %}
+            {% if stage.requested_model %}<tr><th>{{ "requested_label"|t }}</th><td><code>{{ stage.requested_model }}</code></td></tr>{% endif %}
+            {% if stage.model %}<tr><th>{{ "used_label"|t }}</th><td><code>{{ stage.model }}</code></td></tr>{% endif %}
+            <tr><th>{{ "report_started_label"|t }}</th>
+              <td>{{ stage.started_at|fmt_datetime if stage.started_at else "report_not_recorded"|t }}</td></tr>
+            <tr><th>{{ "report_completed_label"|t }}</th>
+              <td>{{ stage.completed_at|fmt_datetime if stage.completed_at else "report_not_recorded"|t }}</td></tr>
+            {% set dur = stage_durations.get(name) %}
+            <tr><th>{{ "report_stage_duration_label"|t }}</th>
+              <td>{{ dur|format_duration if dur is not none else "report_not_recorded"|t }}</td></tr>
+            <tr><th>{{ "input_tokens_label"|t }}</th><td>{{ "{:,}".format(stage.input_tokens) }}</td></tr>
+            <tr><th>{{ "output_tokens_label"|t }}</th><td>{{ "{:,}".format(stage.output_tokens) }}</td></tr>
+            <tr><th>{{ "estimated_cost_label"|t }}</th><td>${{ "%.4f"|format(stage.estimated_cost_usd) }}</td></tr>
+          </tbody>
+        </table>
+
+        {% if stage.fallback_used or stage.model_attempts > 1 %}
+          {% set attempt_phases = stage.attempt_log|attempt_log_phases %}
+          {% set attempt_groups = stage.attempt_log|group_attempts_by_model %}
+          <div class="report-attempts">
+            <h4>{{ "attempts_label"|t }}</h4>
+            {% if attempt_phases %}
+              {% for entry in attempt_phases %}
+                <p class="report-attempt-entry">
+                  <strong>{{ ("attempt_phase_" ~ entry.phase)|t }}</strong> &middot;
+                  {{ ("attempt_outcome_" ~ entry.outcome)|t }} &middot;
+                  {{ "cost_meta_label"|t }} ${{ "%.4f"|format(entry.estimated_cost_usd) }}
+                </p>
+              {% endfor %}
+            {% elif attempt_groups %}
+              {% for g in attempt_groups %}
+                <p class="report-attempt-entry">
+                  <code>{{ g.model }}</code> &middot;
+                  {% if g.outcome == "not_attempted" %}
+                    {{ "attempt_outcome_not_attempted"|t }}{% if g.reason %}: {{ g.reason }}{% endif %}
+                  {% else %}
+                    {{ g.count|count_label("attempt") }} &middot;
+                    {% if g.outcome == "succeeded" %}{{ "status_succeeded"|t }}{% else %}{{ "status_failed"|t }}{% if g.reason %}: {{ g.reason }}{% endif %}{% endif %}
+                  {% endif %}
+                </p>
+              {% endfor %}
+            {% else %}
+              <p class="report-attempt-entry">
+                {{ "fallback_reason_label"|t }}: {{ stage.fallback_reason }} &middot;
+                {{ "attempts_label"|t }}: {{ stage.model_attempts }}
+              </p>
+            {% endif %}
+          </div>
+        {% endif %}
+
+        {% if stage.language_contract_status %}
+          <div class="report-language-contract">
+            <h4>{{ "report_language_contract_heading"|t }}</h4>
+            <table class="report-table">
+              <tbody>
+                <tr><th>{{ "report_language_contract_status_label"|t }}</th><td>{{ stage.language_contract_status }}</td></tr>
+                <tr><th>{{ "report_language_contract_observed_label"|t }}</th><td>{{ stage.observed_language or ("report_not_recorded"|t) }}</td></tr>
+                <tr><th>{{ "report_language_contract_recovery_label"|t }}</th>
+                  <td>{{ "yes_label"|t if stage.language_recovery_attempted else "no_label"|t }}</td></tr>
+              </tbody>
+            </table>
+          </div>
+        {% endif %}
+
+        {% if stage.status == "succeeded" and stage.text %}
+          {% if name == "convergence_analysis" %}
+            <pre class="raw-json">{{ stage.text }}</pre>
+          {% else %}
+            <div class="markdown-body">{{ stage.text|render_markdown }}</div>
+          {% endif %}
+        {% elif stage.status == "skipped" %}
+          <p class="stage-note">{{ "report_stage_skipped_text"|t }}{{ (" — " + stage.fallback_reason) if stage.fallback_reason else "" }}</p>
+        {% elif stage.status == "failed" %}
+          <p class="stage-note">{{ "report_stage_failed_text"|t }}{{ (" — " + stage.error) if stage.error else "" }}</p>
+        {% elif stage.status in ("pending", "running") %}
+          <p class="stage-note">{{ "report_stage_not_run"|t }}</p>
+        {% else %}
+          <p class="stage-note">{{ "report_stage_unavailable_text"|t }}</p>
+        {% endif %}
+      {% endif %}
+    </section>
+  {% endfor %}
+
+</article>
+{% endblock %}

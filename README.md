@@ -62,6 +62,14 @@ Below that:
 - **Trace & provenance** — cost, retries, and which provider actually
   produced each piece, collapsed by default but one click away.
 
+Every result page also has a **Full report** link: a self-contained,
+print-friendly page with everything above expanded (nothing collapsed) plus
+the complete stage-by-stage trace, for sending to someone who wasn't in the
+room. Use the browser's own Print / Save as PDF — there's no one-click
+automated PDF export yet, deliberately deferred. It carries the original
+question and context in full, so it's meant to be shared deliberately, not
+posted publicly.
+
 None of this claims to make a decision easier or faster to understand —
 that's an open question the
 [Decision Cockpit design notes](docs/design/decision-cockpit-proposal.md)
