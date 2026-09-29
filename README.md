@@ -370,8 +370,10 @@ detection — output language is always an explicit choice. Full detail:
 ## Project status
 
 Experimental / pre-1.0, functionally working — CLI and web UI both
-live-tested against real OpenAI/Anthropic/Gemini calls, 648 offline tests
-passing. Single-user, single-process by design, not hardened for
+live-tested against real OpenAI and Anthropic calls, with Gemini live-tested
+historically (currently blocked by an external access restriction, see
+above); 648 offline tests passing. Single-user, single-process by design,
+not hardened for
 multi-user or networked deployment. One evaluation case is complete (Pilot
 Case 1, above); a second, harder case is in progress and partly blocked
 externally (Case 3, above). See
