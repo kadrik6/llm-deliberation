@@ -33,3 +33,14 @@ llm-deliberate-ui = "llm_deliberation.web.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+# `tests/` has no __init__.py, and several test modules import sibling
+# modules as `from tests.X import ...` (e.g. test_report.py, test_cli_stage0.py
+# importing from tests.conftest/tests.test_web). `python -m pytest` happens
+# to work because `python -m` prepends the cwd to sys.path; plain `pytest`
+# (what CI's workflow actually runs) does not, so those imports fail
+# collection with "ModuleNotFoundError: No module named 'tests'". Adding the
+# repo root here makes `tests` importable as a namespace package under
+# either invocation, with no change to any test file.
+pythonpath = ["."]
