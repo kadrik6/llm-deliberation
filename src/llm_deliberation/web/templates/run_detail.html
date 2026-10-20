@@ -26,6 +26,12 @@
     <p class="context-text">{{ record.context }}</p>
   </details>
   {% endif %}
+  {% if record.stage0 and record.stage0.locked_at and not record.stage0.skipped %}
+  <div class="question-block question-framing-locked">
+    <strong>{{ "locked_question_meta_label"|t }}</strong>
+    <p class="question-text">{{ record.stage0.final_question }}</p>
+  </div>
+  {% endif %}
   <div class="meta-row">
     <span>{{ "run_id_label"|t }}: <code>{{ record.id }}</code></span>
     <span>{{ "profile_meta_label"|t }}: {{ ("profile_name_" ~ record.profile)|t }}</span>

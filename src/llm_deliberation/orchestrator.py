@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from decimal import Decimal
 
-from llm_deliberation import convergence, prompts
+from llm_deliberation import convergence, prompts, question_framing
 from llm_deliberation.config import Settings
 from llm_deliberation.cost_budget import BudgetExceededError, RunBudgetGuard, estimate_max_call_cost_usd
 from llm_deliberation.language_detect import classify_language_contract
@@ -287,6 +287,98 @@ def _finalize_convergence_response(response: ModelResponse) -> ModelResponse:
             reason="structured_output_invalid",
         ) from exc
     response.text = convergence.canonical_json(analysis)
+    return response
+
+
+async def _call_budgeted(
+    provider: Provider, *, system: str, prompt: str, budget_guard: RunBudgetGuard | None
+) -> ModelResponse:
+    """Stage 0's budget-guarded call helper (see ADR 009) -- simpler than
+    run_stage's: no truncation/language-contract recovery. Stage 0 is
+    explicitly MVP-scoped and off by default; a failed call surfaces as a
+    ProviderGenerationError and is retried by re-running the CLI command,
+    exactly like any other first stage failure, rather than an automatic
+    in-process recovery attempt. Budget is checked before sending and
+    recorded after, mirroring run_stage's own truncation-recovery sub-calls.
+    """
+    if budget_guard is not None:
+        prompt_chars = len(system) + len(prompt)
+        estimated = estimate_max_call_cost_usd(
+            provider.model, prompt_chars=prompt_chars, max_output_tokens=provider.max_output_tokens
+        )
+        try:
+            budget_guard.check(estimated)
+        except BudgetExceededError as exc:
+            raise budget_exceeded_to_provider_error(
+                exc,
+                requested_model=provider.model,
+                attempts=1,
+                attempt_log=[],
+                fallback_used=False,
+                fallback_reason=None,
+            ) from exc
+    response = await _call(provider, system=system, prompt=prompt)
+    if budget_guard is not None:
+        budget_guard.record_actual(Decimal(str(response.estimated_cost_usd)))
+    return response
+
+
+def _finalize_question_framing_response(response: ModelResponse, parse) -> ModelResponse:
+    """Validate a Stage 0 response against its schema and replace .text
+    with the canonical JSON -- mirrors _finalize_convergence_response,
+    generalized over which of the two Stage 0 schemas (`parse`) applies.
+
+    Also converts an incomplete (empty/truncated) response into the same
+    ProviderGenerationError path: Stage 0 has no truncation-recovery retry
+    of its own (see _call_budgeted), so this is the one place that failure
+    mode is surfaced, keeping callers down to a single exception type to
+    catch.
+    """
+    if response.incomplete_reason is not None:
+        raise ProviderGenerationError(
+            f"question_framing response was {response.incomplete_reason}",
+            requested_model=response.requested_model or response.model,
+            attempts=1,
+            attempt_log=[
+                {
+                    "model": response.model,
+                    "attempt_number": 1,
+                    "outcome": response.incomplete_reason,
+                    "delay_before_seconds": 0.0,
+                    "http_code": None,
+                    "estimated_cost_usd": response.estimated_cost_usd,
+                }
+            ],
+            fallback_used=False,
+            fallback_reason=None,
+            estimated_cost_usd=response.estimated_cost_usd,
+            reason=response.incomplete_reason,
+        )
+    try:
+        parsed = parse(response.text)
+    except question_framing.QuestionFramingParseError as exc:
+        raise ProviderGenerationError(
+            f"question_framing response failed validation: {exc}",
+            requested_model=response.requested_model or response.model,
+            attempts=1,
+            attempt_log=[
+                {
+                    "model": response.model,
+                    "attempt_number": 1,
+                    "outcome": "failed",
+                    "delay_before_seconds": 0.0,
+                    "http_code": None,
+                    "error": exc.raw_text_excerpt or None,
+                    "reason": "response did not match the expected schema",
+                    "estimated_cost_usd": response.estimated_cost_usd,
+                }
+            ],
+            fallback_used=False,
+            fallback_reason=None,
+            estimated_cost_usd=response.estimated_cost_usd,
+            reason="structured_output_invalid",
+        ) from exc
+    response.text = question_framing.canonical_json(parsed)
     return response
 
 
@@ -641,3 +733,43 @@ class DeliberationOrchestrator:
         if stage == "convergence_analysis" and response.incomplete_reason is None:
             response = _finalize_convergence_response(response)
         return response
+
+    # -- Stage 0: question framing (optional, off by default; see ADR 009) --
+
+    async def run_question_framing(
+        self,
+        question: str,
+        context: str | None,
+        *,
+        output_language: str = "en",
+        budget_guard: RunBudgetGuard | None = None,
+    ) -> ModelResponse:
+        """Stage 0a+0b combined call: problem-type classification plus all
+        interview questions, in one call -- reuses provider `a` (OpenAI):
+        this call is neither independent nor adversarial, so it does not
+        need a dedicated or paired provider."""
+        prompt = prompts.problem_framing_and_interview(question, context)
+        system = prompts.base_system(output_language, output_language)
+        response = await _call_budgeted(self.a, system=system, prompt=prompt, budget_guard=budget_guard)
+        return _finalize_question_framing_response(response, question_framing.parse_problem_framing)
+
+    async def run_framing_analysis(
+        self,
+        candidate: str,
+        question: str,
+        context: str | None,
+        interview: list[tuple[str, str]],
+        *,
+        output_language: str = "en",
+        budget_guard: RunBudgetGuard | None = None,
+    ) -> ModelResponse:
+        """Stage 0c+0d combined call for one candidate ("a" or "b"),
+        independently -- same "A and B never see each other's output" rule
+        as ADR 001."""
+        if candidate not in ("a", "b"):
+            raise ValueError(f"candidate must be 'a' or 'b', got {candidate!r}")
+        provider = self.a if candidate == "a" else self.b
+        prompt = prompts.framing_critique_and_premortem(question, context, interview)
+        system = prompts.base_system(output_language, output_language)
+        response = await _call_budgeted(provider, system=system, prompt=prompt, budget_guard=budget_guard)
+        return _finalize_question_framing_response(response, question_framing.parse_framing_analysis)

@@ -40,6 +40,18 @@
     {% endif %}
   </section>
 
+  {% if record.stage0 and record.stage0.locked_at %}
+  <section class="report-section">
+    <h2>{{ "report_question_framing_heading"|t }}</h2>
+    {% if record.stage0.skipped %}
+      <p class="stage-note">{{ "report_question_framing_skipped"|t }}</p>
+    {% else %}
+      <p class="report-locked-question-label">{{ "report_locked_question_label"|t }}</p>
+      <p class="report-question-text">{{ record.stage0.final_question }}</p>
+    {% endif %}
+  </section>
+  {% endif %}
+
   <section class="report-section">
     <h2>{{ "report_how_produced_heading"|t }}</h2>
     <ol class="report-steps">
@@ -209,6 +221,14 @@
       <p class="stage-note">{{ "no_unknowns"|t }}</p>
     {% endif %}
   </section>
+
+  {% if record.stage0 and record.stage0.locked_at and record.stage0.success_criteria %}
+  <section class="report-section locked-success-criterion">
+    <h2>{{ "success_criterion_heading"|t }}</h2>
+    <p class="section-intro">{{ "success_criterion_intro"|t }}</p>
+    <p class="success-criterion-text">{{ record.stage0.success_criteria }}</p>
+  </section>
+  {% endif %}
 
   <section class="report-section human-judgement">
     <h2>{{ "human_judgement_heading"|t }}</h2>

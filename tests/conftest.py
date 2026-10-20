@@ -24,6 +24,28 @@ DEFAULT_CONVERGENCE_JSON = json.dumps(
     }
 )
 
+# Stage 0 (question framing, see ADR 009) fake defaults -- schema-valid so
+# question_framing.parse_* always succeeds unless a test overrides the
+# response via state["responses"]["question_framing" | "framing_analysis_a"
+# | "framing_analysis_b"].
+DEFAULT_PROBLEM_FRAMING_JSON = json.dumps(
+    {
+        "classification": "complicated",
+        "reason": "fake reason",
+        "questions": ["Fake question 1?", "Fake question 2?", "Fake question 3?"],
+    }
+)
+
+DEFAULT_FRAMING_ANALYSIS_JSON = json.dumps(
+    {
+        "hidden_assumptions": ["fake assumption"],
+        "reframings": ["fake reframing"],
+        "is_right_problem": "yes",
+        "right_problem_note": "fake note",
+        "premortem_reasons": ["fake reason 1", "fake reason 2", "fake reason 3"],
+    }
+)
+
 
 class FakeOrchestrator:
     """Stands in for DeliberationOrchestrator: no network, deterministic.
@@ -99,6 +121,10 @@ class FakeOrchestrator:
             stage, output_language=output_language, working_language=working_language
         )
         self._state["log"].append(stage)
+        # The effective question service._execute actually passed in for
+        # this stage -- lets a test confirm a locked Stage 0 question was
+        # (or wasn't) substituted for the run's original question (ADR 009).
+        self._state.setdefault("questions", []).append(question)
         self._state.setdefault("gemini_modes", []).append((stage, gemini_mode))
         self._state.setdefault("languages", []).append((stage, resolved_language))
         self._state.setdefault("language_calls", []).append(
@@ -118,6 +144,56 @@ class FakeOrchestrator:
             provider="Fake",
             model="fake-model",
             text=default_text,
+            usage=Usage(input_tokens=10, output_tokens=20),
+            estimated_cost_usd=0.001,
+            requested_model="fake-model",
+        )
+        defaults.update(overrides)
+        return ModelResponse(**defaults)
+
+    async def run_question_framing(
+        self, question: str, context: str | None, *, output_language: str = "en", budget_guard=None,
+    ) -> ModelResponse:
+        self._state["log"].append("question_framing")
+        fail_with = self._state.get("fail_with", {})
+        if "question_framing" in fail_with:
+            raise fail_with["question_framing"]
+        if "question_framing" in self._state["fail"]:
+            raise RuntimeError("simulated failure in stage 'question_framing'")
+        overrides = self._state.get("responses", {}).get("question_framing", {})
+        defaults = dict(
+            provider="Fake",
+            model="fake-model",
+            text=DEFAULT_PROBLEM_FRAMING_JSON,
+            usage=Usage(input_tokens=10, output_tokens=20),
+            estimated_cost_usd=0.001,
+            requested_model="fake-model",
+        )
+        defaults.update(overrides)
+        return ModelResponse(**defaults)
+
+    async def run_framing_analysis(
+        self,
+        candidate: str,
+        question: str,
+        context: str | None,
+        interview: list[tuple[str, str]],
+        *,
+        output_language: str = "en",
+        budget_guard=None,
+    ) -> ModelResponse:
+        name = f"framing_analysis_{candidate}"
+        self._state["log"].append(name)
+        fail_with = self._state.get("fail_with", {})
+        if name in fail_with:
+            raise fail_with[name]
+        if name in self._state["fail"]:
+            raise RuntimeError(f"simulated failure in stage '{name}'")
+        overrides = self._state.get("responses", {}).get(name, {})
+        defaults = dict(
+            provider="Fake",
+            model="fake-model",
+            text=DEFAULT_FRAMING_ANALYSIS_JSON,
             usage=Usage(input_tokens=10, output_tokens=20),
             estimated_cost_usd=0.001,
             requested_model="fake-model",

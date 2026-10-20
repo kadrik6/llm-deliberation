@@ -20,6 +20,20 @@ _LABELS: dict[str, dict[str, str]] = {
     "total_cost_label": {"en": "Estimated total API cost", "et": "Hinnanguline kogumaksumus"},
     "question_heading": {"en": "Question", "et": "Küsimus"},
     "context_heading": {"en": "Context", "et": "Kontekst"},
+    "locked_question_heading": {
+        "en": "Locked question (Stage 0, used for this deliberation)",
+        "et": "Lukustatud küsimus (0. etapp, kasutati selle arutelu jaoks)",
+    },
+    "question_framing_skipped_note": {
+        "en": "Question framing (Stage 0) was enabled but skipped -- the "
+              "original question above was used unchanged.",
+        "et": "Küsimuse raamistamine (0. etapp) oli sisse lülitatud, kuid "
+              "jäeti vahele -- kasutati muutmata originaalküsimust.",
+    },
+    "success_criteria_heading": {
+        "en": "Success criterion (set before the deliberation ran)",
+        "et": "Õnnestumiskriteerium (määrati enne arutelu käivitamist)",
+    },
     "analysis_a_heading": {"en": "Independent analysis A", "et": "Sõltumatu analüüs A"},
     "analysis_b_heading": {"en": "Independent analysis B", "et": "Sõltumatu analüüs B"},
     "critique_a_of_b_heading": {"en": "A critiques B", "et": "A kritiseerib B-d"},
@@ -224,6 +238,17 @@ def render_markdown(result: RunResult) -> str:
     ]
     if result.context:
         parts.extend([f"## {_label('context_heading', language)}", "", result.context, ""])
+    if result.locked_question is not None:
+        if result.question_framing_skipped:
+            parts.extend(["", _label("question_framing_skipped_note", language), ""])
+        else:
+            parts.extend(
+                [f"## {_label('locked_question_heading', language)}", "", result.locked_question, ""]
+            )
+    if result.success_criteria:
+        parts.extend(
+            [f"## {_label('success_criteria_heading', language)}", "", result.success_criteria, ""]
+        )
     parts.extend([
         _section(_label("analysis_a_heading", language), result.analysis_a, language),
         _section(_label("analysis_b_heading", language), result.analysis_b, language),

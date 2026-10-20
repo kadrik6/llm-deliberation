@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from llm_deliberation import convergence
+from llm_deliberation import convergence, question_framing
 
 # Supported run/output languages -- the language every user-facing generated
 # stage in a run is written in. Deliberately separate from, and never
@@ -330,6 +330,89 @@ Return:
 3. Which criticism materially changed the answer, if any.
 4. Remaining uncertainty.
 5. Strongest case against the revised conclusion.
+""".strip()
+
+
+def problem_framing_and_interview(question: str, context: str | None) -> str:
+    """Stage 0a+0b combined call (see ADR 009): problem-type classification
+    plus the full set of interview questions, in one call -- not
+    independent, not adversarial, so this is sent to a single provider
+    (see orchestrator.DeliberationOrchestrator.run_question_framing)."""
+    schema = question_framing.problem_framing_schema_for_prompt()
+    context_section = context or "(No additional context was provided.)"
+    return f"""
+QUESTION
+{question}
+
+CONTEXT
+{context_section}
+
+This is Stage 0 of a multi-model deliberation system: question framing,
+before any analysis of the question itself begins. Your job has two parts.
+
+PART 1 -- PROBLEM TYPE
+Classify this decision/problem using the Cynefin framework: simple,
+complicated, complex, or unclear. This classification is advisory only --
+it will be shown to the user as a note, and will never automatically skip
+a stage or change how thoroughly this question is analyzed.
+
+PART 2 -- INTERVIEW QUESTIONS
+Write 5 to 8 questions (as one list -- the user will answer all of them at
+once, not one at a time) that would help the user sharpen this question
+before analysis begins. Cover, across the set: what decision depends on
+the answer; which options are already on the table; the user's real
+underlying goal; constraints (time, money, people); and what would show,
+in hindsight, that the decision was right. Do not answer these questions
+yourself -- the user will answer them.
+
+Respond with a single JSON object matching this schema exactly, and nothing
+else -- no markdown code fence, no commentary before or after it:
+
+{schema}
+""".strip()
+
+
+def framing_critique_and_premortem(
+    question: str, context: str | None, interview: list[tuple[str, str]]
+) -> str:
+    """Stage 0c+0d combined call for one candidate, independently -- same
+    "A and B never see each other's output" rule as ADR 001."""
+    schema = question_framing.framing_analysis_schema_for_prompt()
+    context_section = context or "(No additional context was provided.)"
+    if interview:
+        interview_section = "\n".join(f"Q: {q}\nA: {a}" for q, a in interview if a)
+        if not interview_section:
+            interview_section = "(The user did not answer the interview questions.)"
+    else:
+        interview_section = "(No interview was conducted.)"
+    return f"""
+QUESTION
+{question}
+
+CONTEXT
+{context_section}
+
+USER'S INTERVIEW ANSWERS
+{interview_section}
+
+This is Stage 0 of a multi-model deliberation system: question framing,
+before any analysis of the question itself begins. Work independently --
+you have not seen another model's view of this. Your job has two parts.
+
+PART 1 -- FRAMING CRITIQUE
+List hidden assumptions behind this question. Offer 2-3 alternative ways to
+frame the underlying problem -- these are OPTIONS for the user to consider,
+never a recommendation; do not tell the user which one to pick. Say whether
+this looks like the right problem to be solving at all, with a short note.
+
+PART 2 -- PREMORTEM
+Imagine this decision was made and, a year later, turned out to be wrong.
+Name the 3 most likely reasons why, based only on what you know now.
+
+Respond with a single JSON object matching this schema exactly, and nothing
+else -- no markdown code fence, no commentary before or after it:
+
+{schema}
 """.strip()
 
 

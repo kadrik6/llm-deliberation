@@ -153,6 +153,12 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "deliberation_heading": {"en": "Deliberation", "et": "Arutelu"},
     "question_meta_label": {"en": "Question:", "et": "Küsimus:"},
     "context_meta_label": {"en": "Context:", "et": "Kontekst:"},
+    # Stage 0 (see ADR 009) -- only shown when a run actually locked a
+    # question-framing result; never shown for the overwhelming majority of
+    # runs (Stage 0 off by default).
+    "locked_question_meta_label": {
+        "en": "Locked question (Stage 0):", "et": "Lukustatud küsimus (0. etapp):",
+    },
     # -- run detail: compact Question/Context preview (see
     # presenter.input_preview) -- never a summary of the content, just a
     # native <details> disclosure over the exact stored text.
@@ -425,6 +431,21 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     },
     "why_it_matters_label": {"en": "Why it matters", "et": "Miks see on oluline"},
     "evidence_needed_label": {"en": "Evidence needed", "et": "Vajalikud tõendid"},
+
+    # Stage 0 (see ADR 009) -- only shown when a run locked a success
+    # criterion; never shown for the overwhelming majority of runs (Stage 0
+    # off by default). Placed next to "You decide" so the viewer can check
+    # the result against the criterion they set before the run started.
+    "success_criterion_heading": {
+        "en": "Success criterion (locked before this ran)",
+        "et": "Õnnestumiskriteerium (lukustatud enne käivitamist)",
+    },
+    "success_criterion_intro": {
+        "en": "Set during question framing (Stage 0), before the "
+              "deliberation ran. Check the result against this.",
+        "et": "Määrati küsimuse raamistamise (0. etapp) käigus, enne "
+              "arutelu käivitamist. Kontrolli tulemust selle järgi.",
+    },
 
     "human_judgement_heading": {"en": "You decide", "et": "Sina otsustad"},
     # Decision Cockpit Phase 2 -- "You Decide" is now a compact index over
@@ -745,6 +766,22 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "report_no_context": {
         "en": "No additional context was provided.",
         "et": "Lisakonteksti ei esitatud.",
+    },
+    # Stage 0 (see ADR 009) -- only shown when a run actually locked a
+    # question-framing result; never shown for the overwhelming majority of
+    # runs (Stage 0 off by default).
+    "report_question_framing_heading": {
+        "en": "Question framing (Stage 0)", "et": "Küsimuse raamistamine (0. etapp)",
+    },
+    "report_locked_question_label": {
+        "en": "Locked question (used for this deliberation):",
+        "et": "Lukustatud küsimus (kasutati selle arutelu jaoks):",
+    },
+    "report_question_framing_skipped": {
+        "en": "Question framing (Stage 0) was enabled but skipped -- the "
+              "original question above was used unchanged.",
+        "et": "Küsimuse raamistamine (0. etapp) oli sisse lülitatud, kuid "
+              "jäeti vahele -- kasutati muutmata originaalküsimust.",
     },
     "report_how_produced_heading": {
         "en": "How this report was produced", "et": "Kuidas see raport valmis",
