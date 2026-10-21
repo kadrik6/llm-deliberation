@@ -1,11 +1,71 @@
 from __future__ import annotations
 
 import json
+import socket
 from decimal import Decimal
 
 import pytest
 
 from llm_deliberation.types import ModelResponse, Usage
+
+# -- network/credential safety net (applies to every test automatically) ---
+#
+# This whole test suite's one hard rule is "every provider call is faked,
+# no live API calls" -- enforced so far only by convention (every test
+# that touches a provider uses FakeOrchestrator or a hand-built stand-in).
+# An accidental real call (e.g. a new test forgetting to fake its
+# orchestrator, or a bug in a stand-in that lets a real SDK client get
+# constructed) would previously either silently succeed against a real
+# account or fail with a confusing provider-side error. These two autouse
+# fixtures make that fail loudly and immediately instead:
+#
+# 1. Block real network sockets outright. FastAPI's TestClient (used by
+#    every web-layer test) talks to the app in-process via an ASGI
+#    transport -- it never opens a real socket -- and sqlite3 (this app's
+#    only datastore) talks to a local file, not a socket, so neither is
+#    affected. Only an actual outbound HTTP call (openai/anthropic/
+#    google-genai's SDKs, or anything else) would ever reach this.
+# 2. Neutralize the three provider API key env vars to an obviously-fake
+#    sentinel by default, so a test that forgets to fake its own key never
+#    silently inherits a real key from a developer's local `.env`. This
+#    uses setenv, not delenv: a test/fixture (e.g. the `service` fixture
+#    below) that sets its own fake value afterward still wins, regardless
+#    of fixture ordering -- unlike delenv, which could race with a fixture
+#    that already set a fake value and spuriously unset it again.
+
+
+class BlockedNetworkAccess(RuntimeError):
+    """Raised instead of actually connecting -- see _block_network_calls."""
+
+
+def _blocked_connect(self, *args, **kwargs):
+    raise BlockedNetworkAccess(
+        "A test attempted to open a real network connection. Every "
+        "provider call in this suite must be faked (see FakeOrchestrator "
+        "below) -- no live API calls are allowed from tests."
+    )
+
+
+@pytest.fixture(autouse=True)
+def _block_network_calls(monkeypatch):
+    # Patches socket.socket's connect/connect_ex *instance methods*, not
+    # the socket() constructor itself or socket.socketpair() -- asyncio's
+    # own event loop creates a local socketpair() for its internal self-
+    # pipe wakeup mechanism (an already-connected pair, never going through
+    # .connect()), and FastAPI's TestClient talks to the app in-process via
+    # an ASGI transport with no socket involved at all. Only an actual
+    # outbound connection attempt (to anything, including localhost) calls
+    # .connect()/.connect_ex() -- which is also what socket.create_connection()
+    # and every higher-level HTTP client ultimately call through to, so
+    # patching here catches all of them without needing to patch each one.
+    monkeypatch.setattr(socket.socket, "connect", _blocked_connect)
+    monkeypatch.setattr(socket.socket, "connect_ex", _blocked_connect)
+
+
+@pytest.fixture(autouse=True)
+def _neutralize_real_api_keys(monkeypatch):
+    for key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"):
+        monkeypatch.setenv(key, "sk-test-network-blocked-do-not-use")
 
 # A minimal, schema-valid convergence_analysis payload. Every test that lets
 # a run reach "succeeded" exercises this stage, so the fake needs a
