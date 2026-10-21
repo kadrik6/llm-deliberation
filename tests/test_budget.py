@@ -430,3 +430,76 @@ def test_truncation_recovery_respects_budget():
     assert excinfo.value.reason == "run_budget_exceeded"
     assert excinfo.value.estimated_cost_usd == pytest.approx(0.05)  # sunk cost preserved
     assert provider.calls == 1  # the recovery call itself was never made
+
+
+def test_truncation_recovery_budget_check_uses_the_raised_cap_not_the_original(
+    monkeypatch,
+):
+    """Regression: the recovery retry is given a higher max_output_tokens
+    than the call that just truncated (see
+    orchestrator.TRUNCATION_RECOVERY_MAX_OUTPUT_TOKENS_MULTIPLIER), so its
+    budget estimate must reflect THAT raised cap, not the original one --
+    otherwise a budget that looks sufficient for the old (too-small) cap
+    could let a retry fire that is actually unaffordable at the cap it's
+    really about to be sent with.
+
+    Numbers are chosen so the two estimates disagree: at the original cap
+    (100 tokens) the recovery call's estimated cost fits the remaining
+    budget; at the doubled cap (200 tokens) it does not.
+    """
+    from llm_deliberation.orchestrator import DeliberationOrchestrator
+    from llm_deliberation.types import ModelResponse, Usage
+
+    class _TruncatingProvider:
+        provider_name = "OpenAI"
+        model = "gpt-5.6-sol"
+        max_output_tokens = 100
+
+        def __init__(self):
+            self.calls = 0
+
+        def generate(self, *, system: str, prompt: str) -> ModelResponse:
+            self.calls += 1
+            return ModelResponse(
+                provider="OpenAI",
+                model=self.model,
+                text="truncated partial answer",
+                usage=Usage(input_tokens=10, output_tokens=100),
+                estimated_cost_usd=0.05,
+                requested_model=self.model,
+                incomplete_reason="output_truncated",
+            )
+
+    class _Settings:
+        openai_model = "gpt-5.6-sol"
+        anthropic_model = "claude-opus-5"
+        gemini_model = "gemini-3.8-flash"
+        gemini_fallback_models: list[str] = []
+        openai_effort = "high"
+        anthropic_effort = "high"
+        gemini_thinking_level = "high"
+        max_output_tokens = 100
+        provider_timeout_seconds = 5.0
+        provider_max_retries = 0
+        convergence_provider = "anthropic"
+        convergence_model = "claude-opus-5"
+
+    orchestrator = DeliberationOrchestrator.__new__(DeliberationOrchestrator)
+    provider = _TruncatingProvider()
+    orchestrator.a = provider
+    orchestrator.settings = _Settings()
+
+    # Remaining room after the sunk cost: $0.006. Estimated recovery cost
+    # at the original cap (100 tokens) is ~$0.0054 -- would fit. At the
+    # doubled cap (200 tokens) it's ~$0.0074 -- does not.
+    guard = RunBudgetGuard(budget_usd=Decimal("0.056"))
+
+    with pytest.raises(ProviderGenerationError) as excinfo:
+        asyncio.run(
+            orchestrator.run_stage("analysis_a", "question?", {}, budget_guard=guard)
+        )
+    assert excinfo.value.reason == "run_budget_exceeded"
+    assert provider.calls == 1  # the (unaffordable, raised-cap) retry was never sent
+    # The cap must be restored even though the budget check raised, not
+    # left doubled on the shared provider instance for the next stage.
+    assert provider.max_output_tokens == 100

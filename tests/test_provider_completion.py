@@ -100,9 +100,14 @@ class _FixedProvider:
     """Stands in for OpenAIProvider/AnthropicProvider: returns one canned
     ModelResponse per call, consumed in order."""
 
-    def __init__(self, responses: list[ModelResponse]):
+    def __init__(self, responses: list[ModelResponse], max_output_tokens: int = 5000):
         self._responses = list(responses)
         self.calls: list[tuple[str, str]] = []
+        # Every real Provider has this (see providers.Provider.__init__) --
+        # run_stage's truncation-recovery path reads/temporarily raises it
+        # (see TRUNCATION_RECOVERY_MAX_OUTPUT_TOKENS_MULTIPLIER) regardless
+        # of whether a budget_guard is in play, so this stand-in needs it too.
+        self.max_output_tokens = max_output_tokens
 
     def generate(self, *, system: str, prompt: str) -> ModelResponse:
         self.calls.append((system, prompt))
@@ -197,6 +202,95 @@ def test_recovery_retry_succeeds_and_preserves_first_attempt_cost(monkeypatch):
         {"phase": "initial", "model": "gpt-5.6-sol", "outcome": "output_truncated", "estimated_cost_usd": 0.01},
         {"phase": "recovery", "model": "gpt-5.6-sol", "outcome": "succeeded", "estimated_cost_usd": 0.02},
     ]
+
+
+# -- 5b: the one retry gets a higher cap than the call that just truncated,
+#        restored immediately after regardless of outcome ----------------
+
+
+class _RecordingMaxTokensProvider(_FixedProvider):
+    """Like _FixedProvider, but also records provider.max_output_tokens at
+    the moment each call is actually made -- the only way to observe
+    whether run_stage genuinely raised it for the retry, since the cap
+    itself is never passed as a generate() argument."""
+
+    def __init__(self, responses: list[ModelResponse], max_output_tokens: int = 5000):
+        super().__init__(responses, max_output_tokens=max_output_tokens)
+        self.max_output_tokens_at_call: list[int] = []
+
+    def generate(self, *, system: str, prompt: str) -> ModelResponse:
+        self.max_output_tokens_at_call.append(self.max_output_tokens)
+        return super().generate(system=system, prompt=prompt)
+
+
+def test_recovery_retry_uses_a_higher_max_output_tokens_cap(monkeypatch):
+    """Regression: retrying with the exact same cap reliably reproduces
+    the same truncation when the cap was consumed by reasoning/thinking
+    effort rather than verbose prose (see
+    orchestrator.TRUNCATION_RECOVERY_MAX_OUTPUT_TOKENS_MULTIPLIER)."""
+    from llm_deliberation.orchestrator import TRUNCATION_RECOVERY_MAX_OUTPUT_TOKENS_MULTIPLIER
+
+    provider = _RecordingMaxTokensProvider(
+        [_truncated_response(0.01), _complete_response(0.02)], max_output_tokens=5000,
+    )
+    orch = _orchestrator_with_provider(monkeypatch, provider)
+
+    import asyncio
+
+    asyncio.run(orch.run_stage("analysis_a", "Q?", {}, output_language="en"))
+
+    assert provider.max_output_tokens_at_call == [
+        5000,
+        5000 * TRUNCATION_RECOVERY_MAX_OUTPUT_TOKENS_MULTIPLIER,
+    ]
+
+
+def test_recovery_restores_the_original_cap_after_a_successful_retry(monkeypatch):
+    provider = _RecordingMaxTokensProvider(
+        [_truncated_response(0.01), _complete_response(0.02)], max_output_tokens=5000,
+    )
+    orch = _orchestrator_with_provider(monkeypatch, provider)
+
+    import asyncio
+
+    asyncio.run(orch.run_stage("analysis_a", "Q?", {}, output_language="en"))
+
+    # Not left doubled on the shared provider instance for the next stage
+    # that reuses it (see service._execute -- the same provider object
+    # backs every stage with the same role for the rest of this run).
+    assert provider.max_output_tokens == 5000
+
+
+def test_recovery_restores_the_original_cap_when_the_retry_still_truncates(monkeypatch):
+    provider = _RecordingMaxTokensProvider(
+        [_truncated_response(0.01), _truncated_response(0.02)], max_output_tokens=5000,
+    )
+    orch = _orchestrator_with_provider(monkeypatch, provider)
+
+    import asyncio
+
+    asyncio.run(orch.run_stage("analysis_a", "Q?", {}, output_language="en"))
+    assert provider.max_output_tokens == 5000
+
+
+def test_recovery_restores_the_original_cap_even_if_the_retry_itself_raises(monkeypatch):
+    class RaisingSecondCall(_RecordingMaxTokensProvider):
+        def generate(self, *, system, prompt):
+            self.max_output_tokens_at_call.append(self.max_output_tokens)
+            self.calls.append((system, prompt))
+            if len(self.calls) == 1:
+                return _truncated_response(0.01)
+            raise RuntimeError("transport error on retry")
+
+    provider = RaisingSecondCall([], max_output_tokens=5000)
+    orch = _orchestrator_with_provider(monkeypatch, provider)
+
+    import asyncio
+
+    with pytest.raises(ProviderGenerationError):
+        asyncio.run(orch.run_stage("analysis_a", "Q?", {}, output_language="en"))
+
+    assert provider.max_output_tokens == 5000
 
 
 # -- 6: a second truncation results in a failed (still-incomplete) stage --
