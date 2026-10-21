@@ -31,6 +31,15 @@ def test_costs_page_lists_a_succeeded_run(client, service, fake_orchestrator_sta
     assert "Should we do X?" in body
 
 
+def test_costs_page_labels_calls_and_tokens_as_main_pipeline_only(client, service, fake_orchestrator_state):
+    """Regression: Stage 0 has no per-call/token tracking (see
+    cost_report.py's CostReport docstring) -- the summary's Calls/Tokens
+    rows must say so, so they're never read as the run's grand total."""
+    _submit(client, question="Q?")
+    body = client.get("/costs").text
+    assert body.count("main pipeline only") >= 2  # one each for Calls and Tokens
+
+
 def test_costs_page_shows_by_provider_section(client, service, fake_orchestrator_state):
     fake_orchestrator_state["responses"] = {
         "analysis_a": {"provider": "OpenAI"},
@@ -93,6 +102,7 @@ def test_costs_translation_keys_have_distinct_en_and_et_text():
         "costs_calls_label", "costs_tokens_label", "costs_in_word", "costs_out_word",
         "costs_by_provider_heading", "costs_provider_label", "costs_cost_label",
         "costs_by_day_heading", "costs_day_label", "costs_by_run_heading",
+        "costs_main_pipeline_only_note",
     ):
         assert key in TRANSLATIONS
         assert TRANSLATIONS[key].get("en"), f"{key} missing an English translation"

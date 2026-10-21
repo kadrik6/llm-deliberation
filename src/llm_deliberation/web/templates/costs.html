@@ -21,17 +21,17 @@
         <td>${{ "%.4f"|format(report.total_cost_usd) }}</td>
       </tr>
       <tr>
-        <th>{{ "costs_calls_label"|t }}</th>
+        <th>{{ "costs_main_pipeline_label"|t }}</th>
+        <td>${{ "%.4f"|format(report.main_pipeline_cost_usd) }}</td>
+      </tr>
+      <tr>
+        <th>{{ "costs_calls_label"|t }} <span class="stage-note">({{ "costs_main_pipeline_only_note"|t }})</span></th>
         <td>{{ "{:,}".format(report.total_calls) }}</td>
       </tr>
       <tr>
-        <th>{{ "costs_tokens_label"|t }}</th>
+        <th>{{ "costs_tokens_label"|t }} <span class="stage-note">({{ "costs_main_pipeline_only_note"|t }})</span></th>
         <td>{{ "{:,}".format(report.total_input_tokens) }} {{ "costs_in_word"|t }} /
             {{ "{:,}".format(report.total_output_tokens) }} {{ "costs_out_word"|t }}</td>
-      </tr>
-      <tr>
-        <th>{{ "costs_main_pipeline_label"|t }}</th>
-        <td>${{ "%.4f"|format(report.main_pipeline_cost_usd) }}</td>
       </tr>
       {% if report.stage0_cost_usd %}
       <tr>

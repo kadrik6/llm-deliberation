@@ -562,6 +562,13 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     },
     "costs_calls_label": {"en": "Calls", "et": "Kõned"},
     "costs_tokens_label": {"en": "Tokens", "et": "Märgid"},
+    # Stage 0 has no per-call/token tracking in the schema (see
+    # cost_report.py's module docstring) -- the summary's Calls/Tokens
+    # rows only ever tally main-pipeline stages, so this note sits right
+    # next to them to avoid reading them as the run's grand total.
+    "costs_main_pipeline_only_note": {
+        "en": "main pipeline only", "et": "ainult põhiprotsess",
+    },
     "costs_in_word": {"en": "in", "et": "sisend"},
     "costs_out_word": {"en": "out", "et": "väljund"},
     "costs_by_provider_heading": {"en": "By provider", "et": "Pakkuja järgi"},

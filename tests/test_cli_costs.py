@@ -54,6 +54,26 @@ def test_run_costs_reflects_a_real_run(costs_env, capsys):
     assert "Should we do X?" in out
 
 
+def test_run_costs_labels_calls_and_tokens_as_main_pipeline_only(costs_env, capsys):
+    """Regression: the TOTAL line's calls/tokens must never be read as
+    covering Stage 0 too -- Stage 0 has no per-call/token tracking (see
+    cost_report.py's CostReport docstring), so they are main-pipeline-only
+    and must say so."""
+    service = service_module.DeliberationService()
+    run_id = service.create_run("Q?", "economy", red_team_enabled=False)
+    asyncio.run(service.start_run(run_id))
+    service.close()
+
+    asyncio.run(cli._run_costs([]))
+    out = capsys.readouterr().out
+    assert "calls (main pipeline only)" in out
+    assert "output tokens (main pipeline only)" in out
+    # Specifically: NOT attached to the bare "TOTAL:" line itself.
+    total_line = next(line for line in out.splitlines() if line.startswith("TOTAL:"))
+    assert "calls" not in total_line
+    assert "tokens" not in total_line
+
+
 def test_run_costs_shows_stage0_as_a_combined_line(costs_env, capsys):
     service = service_module.DeliberationService()
     run_id = service.create_run(

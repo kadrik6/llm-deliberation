@@ -146,11 +146,16 @@ def _print_cost_report(report: CostReport) -> None:
         print(f"No runs in the last {report.window_days} days.")
         return
 
+    print(f"TOTAL: {_fmt_usd(report.total_cost_usd)}")
+    # Calls/tokens are only ever tallied from main-pipeline stage rows (see
+    # cost_report.py's module docstring) -- shown on this line, not next to
+    # the word "TOTAL", so they are never read as covering Stage 0 too.
     print(
-        f"TOTAL: {_fmt_usd(report.total_cost_usd)}  |  {report.total_calls} calls  |  "
-        f"{report.total_input_tokens:,} input / {report.total_output_tokens:,} output tokens"
+        f"  Main pipeline: {_fmt_usd(report.main_pipeline_cost_usd)}  |  "
+        f"{report.total_calls} calls (main pipeline only)  |  "
+        f"{report.total_input_tokens:,} input / {report.total_output_tokens:,} output tokens "
+        "(main pipeline only)"
     )
-    print(f"  Main pipeline: {_fmt_usd(report.main_pipeline_cost_usd)}")
     if report.stage0_cost_usd:
         print(
             f"  Stage 0:       {_fmt_usd(report.stage0_cost_usd)} "

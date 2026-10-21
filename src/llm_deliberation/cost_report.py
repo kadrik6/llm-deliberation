@@ -122,7 +122,15 @@ class RunTotal:
 class CostReport:
     """Estimated, from this app's own calls; not provider billing (see
     module docstring) -- every renderer of this report must keep that
-    disclaimer next to the figures below."""
+    disclaimer next to the figures below.
+
+    `total_cost_usd` covers everything (main pipeline + Stage 0).
+    `total_input_tokens`/`total_output_tokens`/`total_calls` cover the
+    main pipeline ONLY -- Stage 0 has no per-call or per-token tracking in
+    the schema (see Stage0CostRow), so these three fields can never
+    include a fabricated contribution from it. Every renderer must label
+    them accordingly (e.g. "main pipeline only"), never display them next
+    to the word "total" unqualified."""
 
     window_days: int
     since: str
