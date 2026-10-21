@@ -14,7 +14,12 @@ from fastapi.templating import Jinja2Templates
 
 from llm_deliberation import convergence, report
 from llm_deliberation.config import PROFILES, Settings, default_profile, default_red_team_enabled
-from llm_deliberation.cost_budget import InvalidBudgetError, estimate_run_cost_range, format_usd
+from llm_deliberation.cost_budget import (
+    InvalidBudgetError,
+    estimate_run_cost_range,
+    format_usd,
+    parse_budget_usd,
+)
 from llm_deliberation.prompts import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES
 from llm_deliberation.readiness import ReadinessReport
 from llm_deliberation.service import (
@@ -415,6 +420,29 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
                 gemini_unavailable_choice=True,
                 default_red_team=False,
             )
+
+        # Refuse to start rather than stop mid-run: a budget already below
+        # this run's own worst-case estimate (see ADR 010) would otherwise
+        # be admitted, make real paid progress through several waves, and
+        # only then discover it cannot finish -- sunk cost for nothing.
+        # Checked against the FINAL red_team_requested (after the Gemini-
+        # blocked branch above may have turned it off), never the
+        # originally-submitted value.
+        max_run_cost_value = max_run_cost.strip() or None
+        if max_run_cost_value is not None:
+            try:
+                requested_budget = parse_budget_usd(max_run_cost_value)
+            except InvalidBudgetError:
+                pass  # create_run below raises the same error, translated
+            else:
+                worst_case = svc.estimate_worst_case_cost(profile, red_team_requested)
+                if requested_budget is not None and requested_budget < worst_case.high_usd:
+                    return _rerender(
+                        error=translate("budget_below_worst_case_error", ui_lang).format(
+                            requested=format_usd(requested_budget),
+                            worst_case=format_usd(worst_case.high_usd),
+                        ),
+                    )
 
         try:
             run_id = svc.create_run(

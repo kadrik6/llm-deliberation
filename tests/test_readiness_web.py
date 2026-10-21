@@ -463,9 +463,12 @@ def test_estimated_cost_renders_on_new_deliberation_page(client):
 
 
 def test_positive_budget_persists_and_renders_on_run_detail(client):
-    response = _submit(client, max_run_cost="0.75")
+    # Comfortably above any real pre-run worst-case estimate (ADR 010's
+    # refusal gate) so the run is actually created and reaches run_detail
+    # -- this test is about persistence/rendering, not that gate.
+    response = _submit(client, max_run_cost="3.00")
     body = response.text
-    assert "0.75" in body
+    assert "3.00" in body
 
 
 def test_invalid_budget_shows_translated_error_en(client, service):
@@ -483,6 +486,68 @@ def test_invalid_budget_shows_translated_error_et(client, service):
     assert "positiivne dollarisumma" in response.text
 
 
+# -- 19: budget below worst-case is refused before create_run (ADR 010) ----
+
+
+def test_budget_below_worst_case_is_refused_with_no_run_created(client, service, monkeypatch):
+    monkeypatch.setenv("MAX_OUTPUT_TOKENS", "16000")
+    before = len(service.list_runs())
+
+    response = _submit(client, profile="balanced", red_team=True, max_run_cost="1.00")
+
+    assert response.status_code == 400
+    assert "below the estimated worst case" in response.text
+    assert "$2.9840" in response.text
+    assert len(service.list_runs()) == before  # never created
+
+
+def test_budget_below_worst_case_message_is_translated_to_estonian(client, service, monkeypatch):
+    monkeypatch.setenv("MAX_OUTPUT_TOKENS", "16000")
+    client.get("/ui-language/et", follow_redirects=True)
+
+    response = _submit(client, profile="balanced", red_team=True, max_run_cost="1.00")
+
+    assert response.status_code == 400
+    assert "halvim juht" in response.text
+
+
+def test_budget_at_or_above_worst_case_is_accepted(client, service, monkeypatch):
+    monkeypatch.setenv("MAX_OUTPUT_TOKENS", "16000")
+    before = len(service.list_runs())
+
+    response = _submit(client, profile="balanced", red_team=True, max_run_cost="5.00")
+
+    assert "below the estimated worst case" not in response.text
+    assert len(service.list_runs()) == before + 1
+
+
+def test_no_budget_at_all_is_never_refused(client, service, monkeypatch):
+    monkeypatch.setenv("MAX_OUTPUT_TOKENS", "16000")
+    before = len(service.list_runs())
+
+    response = _submit(client, profile="balanced", red_team=True, max_run_cost=None)
+
+    assert "below the estimated worst case" not in response.text
+    assert len(service.list_runs()) == before + 1
+
+
+def test_refusal_uses_the_final_red_team_state_after_gemini_blocked_choice(
+    client, service, monkeypatch
+):
+    """The worst-case estimate must reflect red_team actually being
+    declined via the Gemini-unavailable choice, not the originally-
+    submitted checkbox state."""
+    monkeypatch.setenv("MAX_OUTPUT_TOKENS", "16000")
+    _patch_readiness(monkeypatch, gemini_ready=False)
+
+    response = _submit(
+        client, profile="balanced", red_team=True, confirm_no_red_team=True, max_run_cost="1.50",
+    )
+
+    assert response.status_code == 400
+    assert "$2.9232" in response.text  # the red-team-OFF estimate
+
+
 def test_run_with_no_budget_shows_no_limit_on_run_detail(client):
     body = _submit(client).text
     assert "no limit" in body.lower()
@@ -493,7 +558,12 @@ def test_run_with_no_budget_shows_no_limit_on_run_detail(client):
 
 def test_budget_exceeded_stage_shows_update_budget_form(client, fake_orchestrator_state):
     fake_orchestrator_state["upper_bound_cost_usd"] = {"analysis_a": Decimal("5.00")}
-    response = _submit(client, max_run_cost="0.01")
+    # Comfortably above any real pre-run worst-case estimate (ADR 010's new
+    # refusal gate, which this test deliberately isn't exercising) -- high
+    # enough that create_run() is reached regardless of MAX_OUTPUT_TOKENS,
+    # but still far below the fake per-stage $5.00 override above, so the
+    # mid-run budget guard (not the pre-run gate) is what blocks this.
+    response = _submit(client, max_run_cost="3.00")
     body = response.text
     assert "run_budget_exceeded" in body or "stopped before sending" in body
     assert 'action="/runs/' in body and "/budget" in body

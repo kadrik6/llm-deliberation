@@ -15,7 +15,23 @@ from llm_deliberation.providers import (
     ProviderGenerationError,
     budget_exceeded_to_provider_error,
 )
-from llm_deliberation.types import ModelResponse
+from llm_deliberation.types import ModelResponse, Usage
+
+# Applied to max_output_tokens for a stage's ONE bounded truncation-
+# recovery retry (see run_stage), never to the stage's configured/
+# persisted max_output_tokens itself. Retrying with the exact same cap
+# reliably reproduces the same truncation when the cap was consumed by
+# reasoning/thinking effort rather than verbose prose -- the "be concise"
+# instruction already appended to the recovery prompt only helps the
+# verbose-prose case. Confirmed on a live run (OpenAI/Anthropic effort
+# "high", max_output_tokens=5000): both the initial and the recovery
+# attempt used ~99.7-99.8% of the configured cap and both truncated,
+# wasting the entire cost of the retry. Restored immediately after the
+# retry call (success, failure, or exception) so no other call on this
+# provider instance is ever affected; the existing per-call budget-guard
+# check naturally adapts to the raised cap since it reads
+# provider.max_output_tokens after this multiplier is applied.
+TRUNCATION_RECOVERY_MAX_OUTPUT_TOKENS_MULTIPLIER = 2
 
 # Stages grouped into waves that can run concurrently. A stage only depends
 # on stages from earlier waves, never on siblings in its own wave.
@@ -515,6 +531,7 @@ class DeliberationOrchestrator:
             recovery_system = system + "\n\n" + prompts.truncation_recovery_instruction(stage_language)
             sunk_cost = response.estimated_cost_usd
             initial_model = response.model
+            initial_usage = response.usage
             # Provenance for the initial (truncated, paid, discarded) attempt
             # -- see providers.group_attempts_by_model's phase-aware sibling
             # (presenter.attempt_log_phases) for how this is rendered. Built
@@ -526,19 +543,33 @@ class DeliberationOrchestrator:
                 "outcome": "output_truncated",
                 "estimated_cost_usd": sunk_cost,
             }
+            # Give the ONE retry a higher cap than the call that just
+            # truncated -- see TRUNCATION_RECOVERY_MAX_OUTPUT_TOKENS_MULTIPLIER's
+            # module-level docstring for why. Passed as a per-call override
+            # (Provider.generate's `max_output_tokens` param -- the same
+            # convention GeminiProvider.generate already uses for a per-call
+            # `timeout_seconds` override), never by mutating this provider
+            # instance's own configured cap: simpler, and there is then
+            # nothing to restore even if this call raises.
+            recovery_max_output_tokens = (
+                provider.max_output_tokens * TRUNCATION_RECOVERY_MAX_OUTPUT_TOKENS_MULTIPLIER
+            )
             if budget_guard is not None:
                 # The recovery call is itself a new paid request -- gated
                 # exactly like any other (see Section 9 of the task brief:
                 # truncation recovery must respect the same run budget).
                 # sunk_cost is recorded first so the check below sees the
                 # true accumulated total, including this stage's own
-                # already-spent (truncated, discarded) first attempt.
+                # already-spent (truncated, discarded) first attempt. The
+                # estimate below already reflects the raised cap -- a budget
+                # too tight for the bigger retry is still correctly blocked,
+                # never silently exceeded.
                 budget_guard.record_actual(Decimal(str(sunk_cost)))
                 recovery_prompt_chars = len(recovery_system) + len(prompt)
                 estimated_recovery_cost = estimate_max_call_cost_usd(
                     initial_model,
                     prompt_chars=recovery_prompt_chars,
-                    max_output_tokens=provider.max_output_tokens,
+                    max_output_tokens=recovery_max_output_tokens,
                 )
                 try:
                     budget_guard.check(estimated_recovery_cost)
@@ -551,20 +582,29 @@ class DeliberationOrchestrator:
                         fallback_used=False,
                         fallback_reason=None,
                         sunk_cost_usd=sunk_cost,
+                        sunk_input_tokens=initial_usage.input_tokens,
+                        sunk_output_tokens=initial_usage.output_tokens,
                     ) from budget_exc
             try:
-                response = await _call(provider, system=recovery_system, prompt=prompt, **kwargs)
+                response = await _call(
+                    provider,
+                    system=recovery_system,
+                    prompt=prompt,
+                    max_output_tokens=recovery_max_output_tokens,
+                    **kwargs,
+                )
             except Exception as exc:
                 # The retry attempt itself raised (e.g. a transport error) --
                 # preserve the first (discarded, truncated) attempt's cost
-                # rather than letting it vanish along with a bare exception
-                # that carries no cost/provenance of its own. attempts=2:
-                # two real paid-attempt-eligible calls were made for this
-                # stage execution (the first paid and truncated, the second
-                # attempted but never returned a usable response) -- see
-                # Section 3/4 of the follow-up reliability investigation:
-                # `model_attempts`/`Attempts (this try)` must count actual
-                # provider calls, not just "did the final call succeed".
+                # and tokens rather than letting them vanish along with a
+                # bare exception that carries no provenance of its own.
+                # attempts=2: two real paid-attempt-eligible calls were made
+                # for this stage execution (the first paid and truncated,
+                # the second attempted but never returned a usable response)
+                # -- see Section 3/4 of the follow-up reliability
+                # investigation: `model_attempts`/`Attempts (this try)` must
+                # count actual provider calls, not just "did the final call
+                # succeed".
                 raise ProviderGenerationError(
                     f"{stage}: response was truncated, and the one bounded "
                     f"recovery retry failed: {exc}",
@@ -584,10 +624,15 @@ class DeliberationOrchestrator:
                     fallback_reason=None,
                     estimated_cost_usd=sunk_cost,
                     reason="output_truncated",
+                    input_tokens=initial_usage.input_tokens,
+                    output_tokens=initial_usage.output_tokens,
                 ) from exc
             # Whether the retry finally succeeded or is still incomplete, the
-            # first attempt's cost was genuinely spent and must stay in the
-            # run's cost accounting -- never silently dropped.
+            # first attempt's cost and tokens were genuinely spent and must
+            # stay in the run's accounting -- never silently dropped (this is
+            # what let run cc184d4f0302's truncated analysis_b end up with
+            # 0 recorded tokens despite costing real money -- see
+            # store.mark_stage_failed, which now persists these).
             recovery_cost = response.estimated_cost_usd
             response.model_attempts = 2
             response.attempt_log = [
@@ -600,6 +645,10 @@ class DeliberationOrchestrator:
                 },
             ]
             response.estimated_cost_usd += sunk_cost
+            response.usage = Usage(
+                input_tokens=initial_usage.input_tokens + response.usage.input_tokens,
+                output_tokens=initial_usage.output_tokens + response.usage.output_tokens,
+            )
 
         # Working-language contract check -- bounded, at most one corrective
         # recovery call. Only runs when an override is actually in effect

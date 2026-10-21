@@ -733,6 +733,21 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "en": "Max run cost must be a positive dollar amount.",
         "et": "Maksimaalne kulu peab olema positiivne dollarisumma.",
     },
+    # ADR 010 -- refuses a run whose budget is already below its own
+    # worst-case estimate, before any provider call, instead of stopping
+    # mid-run. {requested}/{worst_case} are formatted dollar amounts
+    # (see format_usd), substituted in code via .format(), not translated.
+    "budget_below_worst_case_error": {
+        "en": "This budget ({requested}) is below the estimated worst case for "
+              "this profile ({worst_case}). Use at least that amount, or leave "
+              "it blank for no cap. This is a ceiling, not expected spend -- "
+              "real cost is typically well below the worst case.",
+        "et": "See eelarve ({requested}) on väiksem kui selle profiili "
+              "hinnanguline halvim juht ({worst_case}). Kasuta vähemalt "
+              "sellist summat või jäta tühjaks, et eelarvet mitte piirata. "
+              "See on ülempiir, mitte oodatav kulu -- tegelik kulu on "
+              "tavaliselt palju väiksem halvimast juhust.",
+    },
     "cost_estimate_label": {"en": "Estimated cost", "et": "Hinnanguline kulu"},
     "cost_estimate_disclaimer": {
         "en": "A rough estimate, not a guarantee -- actual cost depends on "

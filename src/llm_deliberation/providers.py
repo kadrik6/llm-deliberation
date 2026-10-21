@@ -40,7 +40,18 @@ class Provider(ABC):
         self.max_retries = max_retries
 
     @abstractmethod
-    def generate(self, *, system: str, prompt: str) -> ModelResponse:
+    def generate(
+        self, *, system: str, prompt: str, max_output_tokens: int | None = None
+    ) -> ModelResponse:
+        """`max_output_tokens`, when given, overrides self.max_output_tokens
+        for this one call only (same per-call-override convention as
+        GeminiProvider.generate's `timeout_seconds` param) -- used by
+        orchestrator.run_stage's one bounded truncation-recovery retry to
+        send that single call with a higher cap, without touching this
+        provider instance's own configured cap for every other call that
+        reuses it. Concrete subclasses that never need an override (e.g.
+        GeminiFallbackProvider, whose own retry/fallback loop is excluded
+        from that recovery path) are not required to accept it."""
         raise NotImplementedError
 
     def _result(
@@ -97,7 +108,9 @@ class OpenAIProvider(Provider):
         )
         self.effort = effort
 
-    def generate(self, *, system: str, prompt: str) -> ModelResponse:
+    def generate(
+        self, *, system: str, prompt: str, max_output_tokens: int | None = None
+    ) -> ModelResponse:
         from openai import OpenAI
 
         # Explicit timeout/max_retries -- see DEFAULT_PROVIDER_TIMEOUT_SECONDS's
@@ -105,12 +118,15 @@ class OpenAIProvider(Provider):
         # x up to 3 attempts) leave a single call effectively unbounded from
         # this application's point of view.
         client = OpenAI(timeout=self.timeout_seconds, max_retries=self.max_retries)
+        effective_max_output_tokens = (
+            max_output_tokens if max_output_tokens is not None else self.max_output_tokens
+        )
         response = client.responses.create(
             model=self.model,
             instructions=system,
             input=prompt,
             reasoning={"effort": self.effort},
-            max_output_tokens=self.max_output_tokens,
+            max_output_tokens=effective_max_output_tokens,
             store=False,
         )
 
@@ -174,7 +190,9 @@ class AnthropicProvider(Provider):
         # today (the convergence_analysis stage).
         self.response_schema = response_schema
 
-    def generate(self, *, system: str, prompt: str) -> ModelResponse:
+    def generate(
+        self, *, system: str, prompt: str, max_output_tokens: int | None = None
+    ) -> ModelResponse:
         import anthropic
 
         # Explicit timeout/max_retries -- see DEFAULT_PROVIDER_TIMEOUT_SECONDS's
@@ -183,12 +201,15 @@ class AnthropicProvider(Provider):
         # this application's point of view -- the empirically-confirmed root
         # cause of a real run stalling for ~38 minutes in this stage.
         client = anthropic.Anthropic(timeout=self.timeout_seconds, max_retries=self.max_retries)
+        effective_max_output_tokens = (
+            max_output_tokens if max_output_tokens is not None else self.max_output_tokens
+        )
         output_config: dict[str, object] = {"effort": self.effort}
         if self.response_schema is not None:
             output_config["format"] = {"type": "json_schema", "schema": self.response_schema}
         message = client.messages.create(
             model=self.model,
-            max_tokens=self.max_output_tokens,
+            max_tokens=effective_max_output_tokens,
             system=system,
             output_config=output_config,
             messages=[{"role": "user", "content": prompt}],
@@ -336,6 +357,8 @@ class ProviderGenerationError(RuntimeError):
         fallback_reason: str | None,
         estimated_cost_usd: float = 0.0,
         reason: str = "provider_error",
+        input_tokens: int = 0,
+        output_tokens: int = 0,
     ):
         super().__init__(message)
         self.requested_model = requested_model
@@ -350,6 +373,15 @@ class ProviderGenerationError(RuntimeError):
         # transport/API/config failure, or anything else not classified more
         # specifically). Callers must never derive this by parsing `message`.
         self.reason = reason
+        # Real token counts from whatever response(s) this failure's
+        # already-incurred cost came from (0 for the common case: no call
+        # was ever actually sent, e.g. blocked by budget before dispatch).
+        # Persisted alongside estimated_cost_usd (see store.mark_stage_failed)
+        # so a later diagnosis never needs to back-solve token counts from
+        # cost + a reconstructed prompt -- see the investigation that added
+        # this (run cc184d4f0302: a truncated stage with no token counts).
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
 
 
 def budget_exceeded_to_provider_error(
@@ -361,16 +393,19 @@ def budget_exceeded_to_provider_error(
     fallback_used: bool,
     fallback_reason: str | None,
     sunk_cost_usd: float = 0.0,
+    sunk_input_tokens: int = 0,
+    sunk_output_tokens: int = 0,
 ) -> ProviderGenerationError:
     """Convert a cost_budget.BudgetExceededError into a ProviderGenerationError
     so the run-budget hard guard reuses the exact same persistence/UI path as
     every other stage failure (service._execute's ProviderGenerationError
     branch, store.StageRecord.failure_reason) instead of a parallel one.
 
-    `sunk_cost_usd` is the cost already incurred by earlier attempts in
-    *this* stage execution (0.0 for the common case: blocked before any
-    attempt was made this stage-execution) -- never the blocked call's own
-    estimated cost, since that call was never sent.
+    `sunk_cost_usd`/`sunk_input_tokens`/`sunk_output_tokens` are whatever was
+    already incurred by earlier attempts in *this* stage execution (0 for
+    the common case: blocked before any attempt was made this stage-
+    execution) -- never the blocked call's own estimate, since that call
+    was never sent.
     """
     return ProviderGenerationError(
         str(exc),
@@ -381,6 +416,8 @@ def budget_exceeded_to_provider_error(
         fallback_reason=fallback_reason,
         estimated_cost_usd=sunk_cost_usd,
         reason="run_budget_exceeded",
+        input_tokens=sunk_input_tokens,
+        output_tokens=sunk_output_tokens,
     )
 
 

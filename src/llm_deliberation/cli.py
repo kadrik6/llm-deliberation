@@ -5,7 +5,12 @@ import asyncio
 import sys
 
 from llm_deliberation.config import PROFILES, Settings
-from llm_deliberation.cost_budget import BudgetExceededError, InvalidBudgetError
+from llm_deliberation.cost_budget import (
+    BudgetExceededError,
+    InvalidBudgetError,
+    format_usd,
+    parse_budget_usd,
+)
 from llm_deliberation.cost_report import CostReport
 from llm_deliberation.providers import ProviderGenerationError
 from llm_deliberation.question_framing import FramingAnalysis, QuestionFramingParseError
@@ -420,6 +425,34 @@ async def _run(args: argparse.Namespace) -> int:
         f"B={settings.anthropic_model} | "
         f"red-team={red_team_status}"
     )
+
+    # Refuse to start rather than stop mid-run: a --max-cost already below
+    # this run's own worst-case estimate (see ADR 010) would otherwise be
+    # admitted, make real paid progress through several waves, and only
+    # then discover it cannot finish -- sunk cost for nothing. Checked
+    # after the Gemini-blocked prompt above, since declining red-team there
+    # lowers the worst case settings.red_team_enabled now reflects.
+    if args.max_cost:
+        try:
+            requested_budget = parse_budget_usd(args.max_cost)
+        except InvalidBudgetError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
+        worst_case = service.estimate_worst_case_cost(settings.profile, settings.red_team_enabled)
+        if requested_budget is not None and requested_budget < worst_case.high_usd:
+            print(
+                f"Error: --max-cost {args.max_cost} is below this run's own worst-case "
+                f"estimate ({format_usd(worst_case.high_usd)}) for profile={settings.profile} "
+                f"(red-team={'on' if settings.red_team_enabled else 'off'}).",
+                file=sys.stderr,
+            )
+            print(
+                f"Use --max-cost {format_usd(worst_case.high_usd)} or higher, or omit "
+                "--max-cost for no cap. This is a ceiling, not expected spend -- real cost "
+                "is typically well below the worst case.",
+                file=sys.stderr,
+            )
+            return 2
 
     try:
         run_id = service.create_run(
