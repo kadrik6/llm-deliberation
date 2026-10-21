@@ -41,6 +41,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     # -- navigation ----------------------------------------------------
     "nav_new": {"en": "New", "et": "Uus"},
     "nav_history": {"en": "History", "et": "Ajalugu"},
+    "nav_costs": {"en": "Costs", "et": "Maksumus"},
     "brand": {"en": "LLM Deliberation", "et": "LLM Deliberation"},
 
     # -- new deliberation form ------------------------------------------
@@ -535,6 +536,47 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "history_cost": {"en": "Cost", "et": "Maksumus"},
     "history_language": {"en": "Language", "et": "Keel"},
     "history_empty": {"en": "No runs yet.", "et": "Ühtegi käiku pole veel."},
+
+    # -- costs page (read-only aggregation, see cost_report.py) -------------
+    "costs_heading": {"en": "Costs", "et": "Maksumus"},
+    # The exact phrase requested for this feature -- translated faithfully
+    # for "et", kept exact for "en" (see cost_report.py's module docstring:
+    # every renderer of this report must keep this disclaimer next to the
+    # figures, never presented as a reconciled provider-billing figure).
+    "costs_disclaimer": {
+        "en": "Estimated, from this app's own calls; not provider billing.",
+        "et": "Hinnanguline, pärineb selle rakenduse omadest API-kõnedest -- "
+              "mitte pakkuja arveldusandmed.",
+    },
+    "costs_window_label": {"en": "Window:", "et": "Periood:"},
+    "costs_empty": {
+        "en": "No runs in this window.", "et": "Sel perioodil ei ole käike.",
+    },
+    "costs_total_heading": {"en": "Total", "et": "Kokku"},
+    "costs_total_label": {"en": "Total (estimated)", "et": "Kokku (hinnanguline)"},
+    "costs_main_pipeline_label": {"en": "Main pipeline", "et": "Põhiprotsess"},
+    "costs_stage0_label": {"en": "Stage 0 (question framing)", "et": "0. etapp (küsimuse raamistamine)"},
+    "costs_stage0_note": {
+        "en": "combined per run, not split by provider or call",
+        "et": "liidetud käigu kohta, ei ole jaotatud pakkuja või kõne järgi",
+    },
+    "costs_calls_label": {"en": "Calls", "et": "Kõned"},
+    "costs_tokens_label": {"en": "Tokens", "et": "Märgid"},
+    # Stage 0 has no per-call/token tracking in the schema (see
+    # cost_report.py's module docstring) -- the summary's Calls/Tokens
+    # rows only ever tally main-pipeline stages, so this note sits right
+    # next to them to avoid reading them as the run's grand total.
+    "costs_main_pipeline_only_note": {
+        "en": "main pipeline only", "et": "ainult põhiprotsess",
+    },
+    "costs_in_word": {"en": "in", "et": "sisend"},
+    "costs_out_word": {"en": "out", "et": "väljund"},
+    "costs_by_provider_heading": {"en": "By provider", "et": "Pakkuja järgi"},
+    "costs_provider_label": {"en": "Provider", "et": "Pakkuja"},
+    "costs_cost_label": {"en": "Cost (estimated)", "et": "Maksumus (hinnanguline)"},
+    "costs_by_day_heading": {"en": "By day", "et": "Päeva järgi"},
+    "costs_day_label": {"en": "Day", "et": "Päev"},
+    "costs_by_run_heading": {"en": "By run", "et": "Käigu järgi"},
 
     # -- deliberation quality indicator (near Decision Snapshot / pipeline) --
     "quality_heading": {"en": "Deliberation quality", "et": "Arutelu kvaliteet"},

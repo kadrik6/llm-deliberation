@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}{{ "costs_heading"|t }}{% endblock %}
+{% block content %}
+<h1>{{ "costs_heading"|t }}</h1>
+<p class="section-intro">{{ "costs_disclaimer"|t }}</p>
+<p class="stage-note">
+  {{ "costs_window_label"|t }}
+  {{ report.since|fmt_datetime }} &ndash; {{ report.until|fmt_datetime }}
+</p>
+
+{% if not report.by_run %}
+<p class="stage-note">{{ "costs_empty"|t }}</p>
+{% else %}
+
+<section class="cost-summary">
+  <h2>{{ "costs_total_heading"|t }}</h2>
+  <table class="history-table">
+    <tbody>
+      <tr>
+        <th>{{ "costs_total_label"|t }}</th>
+        <td>${{ "%.4f"|format(report.total_cost_usd) }}</td>
+      </tr>
+      <tr>
+        <th>{{ "costs_main_pipeline_label"|t }}</th>
+        <td>${{ "%.4f"|format(report.main_pipeline_cost_usd) }}</td>
+      </tr>
+      <tr>
+        <th>{{ "costs_calls_label"|t }} <span class="stage-note">({{ "costs_main_pipeline_only_note"|t }})</span></th>
+        <td>{{ "{:,}".format(report.total_calls) }}</td>
+      </tr>
+      <tr>
+        <th>{{ "costs_tokens_label"|t }} <span class="stage-note">({{ "costs_main_pipeline_only_note"|t }})</span></th>
+        <td>{{ "{:,}".format(report.total_input_tokens) }} {{ "costs_in_word"|t }} /
+            {{ "{:,}".format(report.total_output_tokens) }} {{ "costs_out_word"|t }}</td>
+      </tr>
+      {% if report.stage0_cost_usd %}
+      <tr>
+        <th>{{ "costs_stage0_label"|t }}</th>
+        <td>${{ "%.4f"|format(report.stage0_cost_usd) }}
+          <span class="stage-note">{{ "costs_stage0_note"|t }}</span>
+        </td>
+      </tr>
+      {% endif %}
+    </tbody>
+  </table>
+</section>
+
+<section class="cost-by-provider">
+  <h2>{{ "costs_by_provider_heading"|t }}</h2>
+  <table class="history-table">
+    <thead>
+      <tr>
+        <th>{{ "costs_provider_label"|t }}</th>
+        <th>{{ "costs_cost_label"|t }}</th>
+        <th>{{ "costs_calls_label"|t }}</th>
+        <th>{{ "costs_tokens_label"|t }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in report.by_provider %}
+      <tr>
+        <td>{{ p.provider }}</td>
+        <td>${{ "%.4f"|format(p.estimated_cost_usd) }}</td>
+        <td>{{ "{:,}".format(p.calls) if p.calls else "–" }}</td>
+        <td>
+          {% if p.calls %}
+            {{ "{:,}".format(p.input_tokens) }} {{ "costs_in_word"|t }} /
+            {{ "{:,}".format(p.output_tokens) }} {{ "costs_out_word"|t }}
+          {% else %}–{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="cost-by-day">
+  <h2>{{ "costs_by_day_heading"|t }}</h2>
+  <table class="history-table">
+    <thead>
+      <tr>
+        <th>{{ "costs_day_label"|t }}</th>
+        <th>{{ "costs_cost_label"|t }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in report.by_day %}
+      <tr>
+        <td>{{ d.day }}</td>
+        <td>${{ "%.4f"|format(d.estimated_cost_usd) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="cost-by-run">
+  <h2>{{ "costs_by_run_heading"|t }}</h2>
+  <table class="history-table">
+    <thead>
+      <tr>
+        <th>{{ "history_created"|t }}</th>
+        <th>{{ "history_question"|t }}</th>
+        <th>{{ "history_status"|t }}</th>
+        <th>{{ "costs_cost_label"|t }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in report.by_run %}
+      <tr>
+        <td><a class="row-link" href="/runs/{{ r.run_id }}">{{ r.created_at|fmt_datetime }}</a></td>
+        <td><a class="row-link" href="/runs/{{ r.run_id }}" title="{{ r.question_preview }}">{{ r.question_preview }}</a></td>
+        <td><a class="row-link" href="/runs/{{ r.run_id }}"><span class="badge status-{{ r.status }}">{{ ("status_" ~ r.status)|t }}</span></a></td>
+        <td><a class="row-link" href="/runs/{{ r.run_id }}">${{ "%.4f"|format(r.total_cost_usd) }}</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% endif %}
+{% endblock %}

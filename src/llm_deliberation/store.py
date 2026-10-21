@@ -141,6 +141,41 @@ class Stage0Record:
     estimated_cost_usd: float
 
 
+@dataclass(slots=True)
+class StageCostRow:
+    """One main-pipeline stage's cost/token/call data, joined with its
+    run's created_at -- the lean projection the cost report (see
+    cost_report.py) actually needs, instead of the full StageRecord (which
+    would also fetch each stage's artifact text for no reason here).
+    `provider` is the stage's own stored value (None for a stage that never
+    reached mark_stage_succeeded -- see mark_stage_failed, which does not
+    set it); cost_report.py falls back to a deterministic stage-name ->
+    provider mapping for most stages, never a guess for the rest."""
+
+    run_id: str
+    run_created_at: str
+    name: str
+    provider: str | None
+    input_tokens: int
+    output_tokens: int
+    estimated_cost_usd: float
+    model_attempts: int
+
+
+@dataclass(slots=True)
+class Stage0CostRow:
+    """One run's Stage 0 cost, joined with its run's created_at. No
+    provider/token/call-count fields exist: Stage 0's 3 calls are
+    accumulated into a single estimated_cost_usd column (see ADR 009),
+    never split per-call -- cost_report.py reports this as one combined
+    figure rather than inventing a per-call or per-provider breakdown the
+    data doesn't support."""
+
+    run_id: str
+    run_created_at: str
+    estimated_cost_usd: float
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
     id TEXT PRIMARY KEY,
@@ -386,6 +421,18 @@ class Repository:
         query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         rows = self._conn.execute(query, params).fetchall()
+        return [self._run_from_row(row) for row in rows]
+
+    def list_runs_since(self, cutoff_iso: str) -> list[RunRecord]:
+        """Every run created at or after `cutoff_iso` (an ISO timestamp,
+        same format as utc_now_iso()) -- no limit, unlike list_runs(),
+        since the cost report (see cost_report.py) must never silently
+        miss a run inside its own window. Ascending order (oldest first),
+        matching a report's natural reading order."""
+        rows = self._conn.execute(
+            "SELECT * FROM runs WHERE created_at >= ? ORDER BY created_at ASC",
+            (cutoff_iso,),
+        ).fetchall()
         return [self._run_from_row(row) for row in rows]
 
     @staticmethod
@@ -737,3 +784,54 @@ class Repository:
             "SELECT estimated_cost_usd FROM stage0 WHERE run_id = ?", (run_id,)
         ).fetchone()
         return float(row["estimated_cost_usd"]) if row is not None else 0.0
+
+    # -- cost report (read-only aggregation, see cost_report.py) ------
+
+    def list_stage_cost_rows_since(self, cutoff_iso: str) -> list[StageCostRow]:
+        """Every main-pipeline stage actually attempted at least once
+        (started_at IS NOT NULL -- a stage still 'pending' has a DB-default
+        model_attempts of 1 despite never having been called, so this
+        filter is what keeps that phantom attempt out of the cost report's
+        call count) for a run created at or after `cutoff_iso`. A JOIN on
+        runs so the report can group by the run's own created_at date
+        without a second round trip per run."""
+        rows = self._conn.execute(
+            "SELECT s.run_id, r.created_at AS run_created_at, s.name, s.provider, "
+            "s.input_tokens, s.output_tokens, s.estimated_cost_usd, s.model_attempts "
+            "FROM stages s JOIN runs r ON s.run_id = r.id "
+            "WHERE r.created_at >= ? AND s.started_at IS NOT NULL "
+            "ORDER BY r.created_at ASC",
+            (cutoff_iso,),
+        ).fetchall()
+        return [
+            StageCostRow(
+                run_id=row["run_id"],
+                run_created_at=row["run_created_at"],
+                name=row["name"],
+                provider=row["provider"],
+                input_tokens=row["input_tokens"],
+                output_tokens=row["output_tokens"],
+                estimated_cost_usd=row["estimated_cost_usd"],
+                model_attempts=row["model_attempts"],
+            )
+            for row in rows
+        ]
+
+    def list_stage0_cost_rows_since(self, cutoff_iso: str) -> list[Stage0CostRow]:
+        """Every run's Stage 0 cost (one combined figure per run -- see
+        Stage0CostRow) for a run created at or after `cutoff_iso`."""
+        rows = self._conn.execute(
+            "SELECT s0.run_id, r.created_at AS run_created_at, s0.estimated_cost_usd "
+            "FROM stage0 s0 JOIN runs r ON s0.run_id = r.id "
+            "WHERE r.created_at >= ? "
+            "ORDER BY r.created_at ASC",
+            (cutoff_iso,),
+        ).fetchall()
+        return [
+            Stage0CostRow(
+                run_id=row["run_id"],
+                run_created_at=row["run_created_at"],
+                estimated_cost_usd=row["estimated_cost_usd"],
+            )
+            for row in rows
+        ]

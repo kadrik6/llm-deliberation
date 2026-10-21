@@ -746,6 +746,19 @@ def create_app(service: DeliberationService | None = None) -> FastAPI:
             request, "history.html", {"runs": runs, "ui_lang": _ui_lang(request)}
         )
 
+    @app.get("/costs", response_class=HTMLResponse)
+    async def costs(request: Request):
+        """Read-only cost report -- estimated, from this app's own
+        persisted calls; never provider billing (see cost_report.py's
+        module docstring). No network call, no new schema; viewing this
+        page never changes any run's cost (same guarantee as every other
+        read-only view in this app)."""
+        svc: DeliberationService = request.app.state.service
+        report = svc.cost_report()
+        return templates.TemplateResponse(
+            request, "costs.html", {"report": report, "ui_lang": _ui_lang(request)}
+        )
+
     return app
 
 
