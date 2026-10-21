@@ -6,6 +6,7 @@ import sys
 
 from llm_deliberation.config import PROFILES, Settings
 from llm_deliberation.cost_budget import BudgetExceededError, InvalidBudgetError
+from llm_deliberation.cost_report import CostReport
 from llm_deliberation.providers import ProviderGenerationError
 from llm_deliberation.question_framing import FramingAnalysis, QuestionFramingParseError
 from llm_deliberation.report import save_report
@@ -19,6 +20,11 @@ def _parser() -> argparse.ArgumentParser:
         description=(
             "Run independent multi-model analysis, cross-critique, optional "
             "third-model red-team, revision, and final synthesis."
+        ),
+        epilog=(
+            "Also available: `llm-deliberate costs` -- an estimated cost "
+            "report from this app's own persisted calls (not provider "
+            "billing), grouped by provider, by day, and by run."
         ),
     )
     parser.add_argument(
@@ -112,6 +118,83 @@ def _print_readiness_report(report) -> None:
             continue
         marker = "OK" if result.ready else "FAIL"
         print(f"  [{marker}] {label} ({result.configured_model}): {result.user_message}")
+
+
+def _costs_parser() -> argparse.ArgumentParser:
+    return argparse.ArgumentParser(
+        prog="llm-deliberate costs",
+        description=(
+            "Estimated cost report, from this app's own persisted calls -- "
+            "never provider billing. Grouped by provider, by day, and by "
+            "run, over a fixed trailing window."
+        ),
+    )
+
+
+def _fmt_usd(amount: float) -> str:
+    return f"${amount:.4f}"
+
+
+def _print_cost_report(report: CostReport) -> None:
+    print("Cost report -- estimated, from this app's own calls; not provider billing")
+    since_date = report.since[:10]
+    until_date = report.until[:10]
+    print(f"Window: last {report.window_days} days ({since_date} to {until_date})")
+    print()
+
+    if not report.by_run:
+        print(f"No runs in the last {report.window_days} days.")
+        return
+
+    print(
+        f"TOTAL: {_fmt_usd(report.total_cost_usd)}  |  {report.total_calls} calls  |  "
+        f"{report.total_input_tokens:,} input / {report.total_output_tokens:,} output tokens"
+    )
+    print(f"  Main pipeline: {_fmt_usd(report.main_pipeline_cost_usd)}")
+    if report.stage0_cost_usd:
+        print(
+            f"  Stage 0:       {_fmt_usd(report.stage0_cost_usd)} "
+            "(combined per run, not split by provider or call)"
+        )
+
+    print("\nBy provider:")
+    for p in report.by_provider:
+        if p.calls:
+            print(
+                f"  {p.provider:<55} {_fmt_usd(p.estimated_cost_usd):>10}  {p.calls:>3} calls  "
+                f"{p.input_tokens:,} in / {p.output_tokens:,} out"
+            )
+        else:
+            # Stage 0's combined bucket -- no call count or tokens to show
+            # (see STAGE0_PROVIDER_LABEL's docstring in cost_report.py).
+            print(f"  {p.provider:<55} {_fmt_usd(p.estimated_cost_usd):>10}")
+
+    print("\nBy day:")
+    for d in report.by_day:
+        print(f"  {d.day:<20} {_fmt_usd(d.estimated_cost_usd):>10}")
+
+    print("\nBy run:")
+    for r in report.by_run:
+        print(
+            f"  {r.run_id}  {r.created_at[:16]}  {r.status:<10} "
+            f"{_fmt_usd(r.total_cost_usd):>10}  {r.question_preview}"
+        )
+
+
+async def _run_costs(argv: list[str]) -> int:
+    """`llm-deliberate costs` -- a separate, minimal entry point (not the
+    main flat --flag parser above) since this is a distinct verb, not a
+    deliberation option. Dispatched from main() before the regular parser
+    ever sees argv (see main()'s own docstring note). No provider calls,
+    no API keys required -- purely reads already-persisted data."""
+    _costs_parser().parse_args(argv)  # only ever used for --help/-h here
+    service = DeliberationService()
+    try:
+        report = service.cost_report()
+    finally:
+        service.close()
+    _print_cost_report(report)
+    return 0
 
 
 def _print_run_outcome(service: DeliberationService, record: RunRecord, output: str | None) -> int:
@@ -368,6 +451,19 @@ async def _run(args: argparse.Namespace) -> int:
 
 
 def main() -> None:
+    # "costs" is a distinct verb, not a deliberation option -- dispatched
+    # here, before the main flat parser ever sees argv, so it is never
+    # mistaken for a (very short, literal) question via the positional
+    # `question` argument below.
+    if len(sys.argv) > 1 and sys.argv[1] == "costs":
+        try:
+            raise SystemExit(asyncio.run(_run_costs(sys.argv[2:])))
+        except KeyboardInterrupt:
+            raise SystemExit(130)
+        except Exception as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            raise SystemExit(1)
+
     args = _parser().parse_args()
     try:
         raise SystemExit(asyncio.run(_run(args)))

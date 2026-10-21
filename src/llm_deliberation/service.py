@@ -4,9 +4,11 @@ import asyncio
 import json
 import os
 import uuid
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
+from llm_deliberation import cost_report as cost_report_module
 from llm_deliberation import question_framing, readiness
 from llm_deliberation.config import PROFILES, Settings, default_red_team_enabled
 from llm_deliberation.cost_budget import (
@@ -293,6 +295,26 @@ class DeliberationService:
         self, *, status: str | None = None, limit: int = 50, offset: int = 0
     ) -> list[RunRecord]:
         return self.repo.list_runs(status=status, limit=limit, offset=offset)
+
+    def cost_report(
+        self,
+        *,
+        now: datetime | None = None,
+        window_days: int = cost_report_module.COST_REPORT_WINDOW_DAYS,
+    ) -> cost_report_module.CostReport:
+        """Read-only aggregation over already-persisted cost/token/call
+        data -- see cost_report.py's module docstring. No network call, no
+        new schema; `now` is injectable so callers (and tests) can fix the
+        window boundary deterministically."""
+        now = now or datetime.now(timezone.utc)
+        cutoff = cost_report_module.cutoff_iso(now, window_days)
+        return cost_report_module.build_cost_report(
+            runs=self.repo.list_runs_since(cutoff),
+            stage_rows=self.repo.list_stage_cost_rows_since(cutoff),
+            stage0_rows=self.repo.list_stage0_cost_rows_since(cutoff),
+            now=now,
+            window_days=window_days,
+        )
 
     def to_run_result(self, run_id: str) -> RunResult:
         """Reconstruct a RunResult (for Markdown export) from stored data.
