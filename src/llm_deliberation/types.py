@@ -68,6 +68,13 @@ class RunResult:
     convergence: ModelResponse | None
     synthesis: ModelResponse
     context: str | None = None
+    # Stage 0 (see ADR 009) -- None for every run that didn't have it
+    # enabled or locked. `question` above always stays the user's original,
+    # unmutated input; `locked_question` is only set once Stage 0 was
+    # locked, so the export can show both and keep the reframing traceable.
+    locked_question: str | None = None
+    success_criteria: str | None = None
+    question_framing_skipped: bool = False
 
     @property
     def all_responses(self) -> list[ModelResponse]:

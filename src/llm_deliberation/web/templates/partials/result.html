@@ -102,6 +102,14 @@
 
 {% include "partials/convergence_summary.html" %}
 
+{% if record.stage0 and record.stage0.locked_at and record.stage0.success_criteria %}
+<section class="locked-success-criterion" id="success-criterion">
+  <h2>{{ "success_criterion_heading"|t }}</h2>
+  <p class="section-intro">{{ "success_criterion_intro"|t }}</p>
+  <p class="success-criterion-text">{{ record.stage0.success_criteria }}</p>
+</section>
+{% endif %}
+
 <section class="artifacts">
   <h2>{{ "full_trace_heading"|t }}</h2>
   {% for name, title_key in artifact_sections %}

@@ -5,7 +5,9 @@ import asyncio
 import sys
 
 from llm_deliberation.config import PROFILES, Settings
-from llm_deliberation.cost_budget import InvalidBudgetError
+from llm_deliberation.cost_budget import BudgetExceededError, InvalidBudgetError
+from llm_deliberation.providers import ProviderGenerationError
+from llm_deliberation.question_framing import FramingAnalysis, QuestionFramingParseError
 from llm_deliberation.report import save_report
 from llm_deliberation.service import DeliberationService
 from llm_deliberation.store import RunRecord
@@ -87,6 +89,16 @@ def _parser() -> argparse.ArgumentParser:
         help="Run the provider readiness preflight and exit -- does not "
              "create a run or send any generation request.",
     )
+    parser.add_argument(
+        "--question-framing",
+        dest="question_framing",
+        action="store_true",
+        help="Enable optional Stage 0 question framing before the "
+             "deliberation (problem-type note, an interview, independent "
+             "framing critique + premortem per candidate). Off by default: "
+             "untested hypothesis, adds extra paid calls (see ADR 009). "
+             "CLI only for now.",
+    )
     return parser
 
 
@@ -125,6 +137,93 @@ def _print_run_outcome(service: DeliberationService, record: RunRecord, output: 
     print(f"Full report: {path}")
     print(f"Run ID: {record.id}")
     return 0
+
+
+def _print_framing_analysis(label: str, analysis: FramingAnalysis) -> None:
+    print(f"\n--- {label} ---")
+    if analysis.hidden_assumptions:
+        print("Hidden assumptions:")
+        for item in analysis.hidden_assumptions:
+            print(f"  - {item}")
+    if analysis.reframings:
+        print("Possible reframings (options, not a recommendation):")
+        for item in analysis.reframings:
+            print(f"  - {item}")
+    note = f" -- {analysis.right_problem_note}" if analysis.right_problem_note else ""
+    print(f"Right problem? {analysis.is_right_problem}{note}")
+    if analysis.premortem_reasons:
+        print("If this decision looks wrong a year from now, most likely because:")
+        for item in analysis.premortem_reasons:
+            print(f"  - {item}")
+
+
+async def _run_question_framing_cli(service: DeliberationService, run_id: str) -> None:
+    """Stage 0's interactive CLI flow (see ADR 009) -- up to 3 paid calls:
+    one combined problem-type + interview-questions call, then candidate A
+    and candidate B each independently return a combined framing critique +
+    premortem. CLI only for now; the web wizard is a deferred phase.
+
+    sys.stdin.isatty() is checked once, up front: a non-interactive
+    invocation (piped stdin) cannot usefully answer 5-8 interview
+    questions, so it skips the two framing-analysis calls entirely (they
+    would only ever see empty answers) and locks with the original
+    question unchanged -- 1 paid call instead of 3, not 3 calls spent on
+    answers that were never actually given.
+    """
+    print("\n=== Stage 0: Question framing (optional, untested hypothesis) ===")
+    problem_framing = await service.run_question_framing(run_id)
+    print(
+        f"\nProblem type (advisory only -- never changes what runs next): "
+        f"{problem_framing.classification}"
+    )
+    print(f"  {problem_framing.reason}")
+
+    run = service.get_run(run_id)
+
+    if not sys.stdin.isatty():
+        print(
+            "\nNon-interactive input detected -- skipping the interview and "
+            "the independent framing critique/premortem (answers would be "
+            "empty). Locking with the original question, unchanged."
+        )
+        service.record_interview_answers(run_id, ["" for _ in problem_framing.questions])
+        service.lock_question_framing(
+            run_id, final_question=run.question, success_criteria=None,
+        )
+        print(f"\nLocked. Proceeding with: {run.question}")
+        return
+
+    print("\nA few questions to help sharpen this question before analysis begins:")
+    answers: list[str] = []
+    for i, question_text in enumerate(problem_framing.questions, start=1):
+        print(f"\n{i}. {question_text}")
+        answers.append(input("   > ").strip())
+    service.record_interview_answers(run_id, answers)
+
+    print("\nRunning independent framing critique + premortem (candidates A and B)...")
+    analysis_a, analysis_b = await asyncio.gather(
+        service.run_framing_analysis(run_id, "a"),
+        service.run_framing_analysis(run_id, "b"),
+    )
+    _print_framing_analysis("Candidate A", analysis_a)
+    _print_framing_analysis("Candidate B", analysis_b)
+
+    print(
+        "\nYou can keep the original question, or write a reframed one. "
+        "The reframings above are options -- none of them is a recommendation."
+    )
+    print(f"\nOriginal question: {run.question}")
+    final_question = run.question
+    new_question = input("Final question [press Enter to keep the original]: ").strip()
+    if new_question:
+        final_question = new_question
+    success_criteria = input(
+        "Success criterion -- what would show this decision was right? [optional]: "
+    ).strip()
+    service.lock_question_framing(
+        run_id, final_question=final_question, success_criteria=success_criteria or None,
+    )
+    print(f"\nLocked. Proceeding with: {final_question}")
 
 
 async def _run(args: argparse.Namespace) -> int:
@@ -241,6 +340,7 @@ async def _run(args: argparse.Namespace) -> int:
             red_team_enabled=settings.red_team_enabled,
             context=args.context,
             max_run_cost_usd=args.max_cost,
+            question_framing_enabled=args.question_framing,
         )
     except InvalidBudgetError as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -248,8 +348,21 @@ async def _run(args: argparse.Namespace) -> int:
     print(f"Run ID: {run_id}")
     if args.max_cost:
         print(f"Max run cost: ${args.max_cost}")
-    print("Running deliberation...")
 
+    if args.question_framing:
+        try:
+            await _run_question_framing_cli(service, run_id)
+        except (ProviderGenerationError, QuestionFramingParseError, BudgetExceededError) as exc:
+            print(f"\nStage 0 (question framing) failed: {exc}", file=sys.stderr)
+            print(
+                f"Run {run_id} was created but not started. Re-run without "
+                "--question-framing to analyze the original question "
+                "directly, or try again.",
+                file=sys.stderr,
+            )
+            return 1
+
+    print("Running deliberation...")
     record = await service.start_run(run_id)
     return _print_run_outcome(service, record, args.output)
 

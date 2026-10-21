@@ -102,6 +102,43 @@ class RunRecord:
     # historical runs.
     working_language: str | None = None
     stages: list[StageRecord] = field(default_factory=list)
+    # Optional Stage 0 (question framing) record -- see ADR 009. None for
+    # every run that didn't have it enabled (the overwhelming majority: it
+    # is off by default) and for any run created before this feature
+    # existed. Populated only by get_run_full(), exactly like `stages`.
+    stage0: "Stage0Record | None" = None
+
+
+@dataclass(slots=True)
+class Stage0Record:
+    """Optional, off-by-default pre-run phase (see ADR 009): one model
+    classifies the problem type and writes an interview's worth of
+    questions in a single call, the user answers them, and candidates A and
+    B each independently produce a framing critique + premortem in one more
+    call. `locked_at` is the one commit marker -- until it is set, this row
+    represents a Stage 0 still in progress (see service.lock_question_framing).
+
+    `*_json` columns hold canonical, schema-validated JSON (see
+    question_framing.py) -- the same "validate once, store the canonical
+    form" pattern convergence_analysis's artifact already uses. None means
+    that sub-step hasn't completed yet, never an empty/invented result.
+    """
+
+    run_id: str
+    created_at: str
+    skipped: bool
+    problem_type_json: str | None
+    interview_json: str | None
+    framing_analysis_a_json: str | None
+    framing_analysis_b_json: str | None
+    # The question actually used for the main pipeline once locked -- the
+    # user's original question (runs.question, never mutated -- see ADR
+    # 003/009) stays available alongside this for traceability; this is
+    # only ever set by lock_stage0().
+    final_question: str | None
+    success_criteria: str | None
+    locked_at: str | None
+    estimated_cost_usd: float
 
 
 SCHEMA = """
@@ -153,6 +190,24 @@ CREATE TABLE IF NOT EXISTS artifacts (
 
 CREATE INDEX IF NOT EXISTS idx_stages_run_id ON stages(run_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_stage_id ON artifacts(stage_id);
+
+-- Stage 0 (question framing, see ADR 009) -- optional, off by default.
+-- A brand-new table (not new columns on an existing one), so no column-
+-- migration machinery is needed: CREATE TABLE IF NOT EXISTS is itself
+-- additive for an existing database.
+CREATE TABLE IF NOT EXISTS stage0 (
+    run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    skipped INTEGER NOT NULL DEFAULT 0,
+    problem_type_json TEXT,
+    interview_json TEXT,
+    framing_analysis_a_json TEXT,
+    framing_analysis_b_json TEXT,
+    final_question TEXT,
+    success_criteria TEXT,
+    locked_at TEXT,
+    estimated_cost_usd REAL NOT NULL DEFAULT 0.0
+);
 """
 
 # Columns added after the initial schema. CREATE TABLE IF NOT EXISTS above
@@ -313,6 +368,7 @@ class Repository:
     def get_run_full(self, run_id: str) -> RunRecord:
         run = self.get_run(run_id)
         run.stages = self.list_stages(run_id)
+        run.stage0 = self.get_stage0(run_id)
         return run
 
     def list_runs(
@@ -572,3 +628,112 @@ class Repository:
             (run_id,),
         ).fetchone()
         return float(row["total"])
+
+    # -- stage0 (question framing, see ADR 009) -----------------------
+
+    def insert_stage0(self, run_id: str) -> None:
+        self._conn.execute(
+            "INSERT INTO stage0 (run_id, created_at, skipped, estimated_cost_usd) "
+            "VALUES (?, ?, 0, 0.0)",
+            (run_id, utc_now_iso()),
+        )
+        self._conn.commit()
+
+    def get_stage0(self, run_id: str) -> Stage0Record | None:
+        row = self._conn.execute(
+            "SELECT * FROM stage0 WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return self._stage0_from_row(row)
+
+    @staticmethod
+    def _stage0_from_row(row: sqlite3.Row) -> Stage0Record:
+        return Stage0Record(
+            run_id=row["run_id"],
+            created_at=row["created_at"],
+            skipped=bool(row["skipped"]),
+            problem_type_json=row["problem_type_json"],
+            interview_json=row["interview_json"],
+            framing_analysis_a_json=row["framing_analysis_a_json"],
+            framing_analysis_b_json=row["framing_analysis_b_json"],
+            final_question=row["final_question"],
+            success_criteria=row["success_criteria"],
+            locked_at=row["locked_at"],
+            estimated_cost_usd=row["estimated_cost_usd"],
+        )
+
+    def update_stage0_problem_framing(
+        self, run_id: str, *, problem_type_json: str, estimated_cost_usd: float
+    ) -> None:
+        """Persists the combined 0a+0b call's result (classification,
+        reason, and the full list of interview questions -- see ADR 009's
+        call-count trade-off: the interview is generated all at once, not
+        adaptively). Cost accumulates, matching mark_stage_succeeded's own
+        "never drop already-incurred cost" rule."""
+        self._conn.execute(
+            "UPDATE stage0 SET problem_type_json = ?, "
+            "estimated_cost_usd = estimated_cost_usd + ? WHERE run_id = ?",
+            (problem_type_json, estimated_cost_usd, run_id),
+        )
+        self._conn.commit()
+
+    def update_stage0_interview(self, run_id: str, *, interview_json: str) -> None:
+        """Persists the user's answers alongside the questions (see
+        service.record_interview_answers) -- no cost of its own, the user
+        typing an answer is not a provider call."""
+        self._conn.execute(
+            "UPDATE stage0 SET interview_json = ? WHERE run_id = ?",
+            (interview_json, run_id),
+        )
+        self._conn.commit()
+
+    def update_stage0_framing_analysis(
+        self, run_id: str, *, candidate: str, analysis_json: str, estimated_cost_usd: float
+    ) -> None:
+        if candidate not in ("a", "b"):
+            raise ValueError(f"candidate must be 'a' or 'b', got {candidate!r}")
+        column = "framing_analysis_a_json" if candidate == "a" else "framing_analysis_b_json"
+        self._conn.execute(
+            f"UPDATE stage0 SET {column} = ?, "
+            "estimated_cost_usd = estimated_cost_usd + ? WHERE run_id = ?",
+            (analysis_json, estimated_cost_usd, run_id),
+        )
+        self._conn.commit()
+
+    def record_stage0_cost(self, run_id: str, estimated_cost_usd: float) -> None:
+        """Accumulates cost with no other column change -- used when a
+        Stage 0 call fails (budget-blocked, or a paid call that failed
+        schema validation) so the already-incurred cost is still counted,
+        never silently dropped (see mark_stage_failed's matching rule)."""
+        self._conn.execute(
+            "UPDATE stage0 SET estimated_cost_usd = estimated_cost_usd + ? WHERE run_id = ?",
+            (estimated_cost_usd, run_id),
+        )
+        self._conn.commit()
+
+    def lock_stage0(
+        self,
+        run_id: str,
+        *,
+        final_question: str,
+        success_criteria: str | None,
+        skipped: bool = False,
+    ) -> None:
+        """The one commit marker for Stage 0 (see service.lock_question_framing).
+        "Skip Stage 0" is a degenerate lock: final_question is set to the
+        user's original question and skipped=True, so downstream code never
+        needs to branch on skipped vs. completed -- it only ever asks
+        "is locked_at set, and what is final_question"."""
+        self._conn.execute(
+            "UPDATE stage0 SET final_question = ?, success_criteria = ?, "
+            "skipped = ?, locked_at = ? WHERE run_id = ?",
+            (final_question, success_criteria, int(skipped), utc_now_iso(), run_id),
+        )
+        self._conn.commit()
+
+    def sum_stage0_cost(self, run_id: str) -> float:
+        row = self._conn.execute(
+            "SELECT estimated_cost_usd FROM stage0 WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        return float(row["estimated_cost_usd"]) if row is not None else 0.0

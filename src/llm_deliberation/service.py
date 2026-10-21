@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import uuid
 from decimal import Decimal
 from pathlib import Path
 
-from llm_deliberation import readiness
+from llm_deliberation import question_framing, readiness
 from llm_deliberation.config import PROFILES, Settings, default_red_team_enabled
 from llm_deliberation.cost_budget import (
     BudgetExceededError,
@@ -88,6 +89,7 @@ class DeliberationService:
         context: str | None = None,
         language: str = "en",
         max_run_cost_usd: str | None = None,
+        question_framing_enabled: bool = False,
     ) -> str:
         if profile not in PROFILES:
             valid = ", ".join(sorted(PROFILES))
@@ -132,6 +134,10 @@ class DeliberationService:
             if name == "red_team" and not enabled:
                 continue
             self.repo.insert_stage(run_id, name)
+        # Optional, off by default (see ADR 009) -- a run with this unset
+        # has no stage0 row at all, and behaves exactly as it always has.
+        if question_framing_enabled:
+            self.repo.insert_stage0(run_id)
         return run_id
 
     def update_run_budget(self, run_id: str, max_run_cost_usd: str | None) -> None:
@@ -142,6 +148,133 @@ class DeliberationService:
         """
         budget = parse_budget_usd(max_run_cost_usd)
         self.repo.update_run_budget(run_id, str(budget) if budget is not None else None)
+
+    # -- Stage 0: question framing (optional, off by default; see ADR 009) --
+
+    def _stage0_orchestrator(self, run: RunRecord) -> DeliberationOrchestrator:
+        settings = Settings.load(profile_override=run.profile, red_team_override=run.red_team_enabled)
+        settings.validate_keys()
+        return DeliberationOrchestrator(settings)
+
+    def _stage0_budget_guard(self, run: RunRecord) -> RunBudgetGuard:
+        """Same shared budget pool _execute's own guard uses (see that
+        method's comment) -- Stage 0 and the main pipeline never have
+        separate caps."""
+        budget_usd = Decimal(run.max_run_cost_usd) if run.max_run_cost_usd else None
+        spent = default_budget_from_float(self.repo.sum_stage0_cost(run.id))
+        return RunBudgetGuard(budget_usd=budget_usd, spent_usd=spent)
+
+    def _require_stage0(self, run_id: str):
+        stage0 = self.repo.get_stage0(run_id)
+        if stage0 is None:
+            raise ValueError(f"Run {run_id} does not have question framing enabled.")
+        return stage0
+
+    async def run_question_framing(self, run_id: str) -> question_framing.ProblemFraming:
+        """Stage 0a+0b combined call: classification + all interview
+        questions in one call (see ADR 009). Raises ProviderGenerationError
+        (orchestrator-level failure) or QuestionFramingParseError (this
+        method's own re-parse of an otherwise-successful response) -- either
+        way, any already-incurred cost is still recorded, never dropped
+        (see record_stage0_cost)."""
+        run = self.repo.get_run(run_id)
+        self._require_stage0(run_id)
+        orchestrator = self._stage0_orchestrator(run)
+        guard = self._stage0_budget_guard(run)
+        try:
+            response = await orchestrator.run_question_framing(
+                run.question, run.context, output_language=run.language, budget_guard=guard,
+            )
+        except ProviderGenerationError as exc:
+            if exc.estimated_cost_usd:
+                self.repo.record_stage0_cost(run_id, exc.estimated_cost_usd)
+            raise
+        try:
+            parsed = question_framing.parse_problem_framing(response.text)
+        except question_framing.QuestionFramingParseError:
+            # The call itself already succeeded and was paid for -- never
+            # drop that cost just because this (re-)parse failed (see
+            # mark_stage_succeeded/mark_stage_failed's matching rule).
+            if response.estimated_cost_usd:
+                self.repo.record_stage0_cost(run_id, response.estimated_cost_usd)
+            raise
+        # Persist the canonical, re-validated JSON (as convergence.py's
+        # equivalent stage does), never response.text directly: relying on
+        # the orchestrator having already normalized it is an implicit
+        # cross-module invariant this method shouldn't depend on.
+        self.repo.update_stage0_problem_framing(
+            run_id,
+            problem_type_json=question_framing.canonical_json(parsed),
+            estimated_cost_usd=response.estimated_cost_usd,
+        )
+        return parsed
+
+    def record_interview_answers(self, run_id: str, answers: list[str]) -> None:
+        """Persists the user's answers alongside the already-stored
+        questions (see run_question_framing). No provider call, no cost."""
+        stage0 = self._require_stage0(run_id)
+        if stage0.problem_type_json is None:
+            raise ValueError(f"Run {run_id} has no interview questions to answer yet.")
+        questions = json.loads(stage0.problem_type_json)["questions"]
+        if len(answers) != len(questions):
+            raise ValueError(f"Expected {len(questions)} answers, got {len(answers)}.")
+        interview = [{"question": q, "answer": a} for q, a in zip(questions, answers)]
+        self.repo.update_stage0_interview(run_id, interview_json=json.dumps(interview, ensure_ascii=False))
+
+    async def run_framing_analysis(self, run_id: str, candidate: str) -> question_framing.FramingAnalysis:
+        """Stage 0c+0d combined call for one candidate ("a" or "b"),
+        independently -- same rule as ADR 001. Raises ProviderGenerationError
+        or QuestionFramingParseError, with the same never-drop-cost handling
+        as run_question_framing."""
+        if candidate not in ("a", "b"):
+            raise ValueError(f"candidate must be 'a' or 'b', got {candidate!r}")
+        run = self.repo.get_run(run_id)
+        stage0 = self._require_stage0(run_id)
+        orchestrator = self._stage0_orchestrator(run)
+        guard = self._stage0_budget_guard(run)
+        interview: list[tuple[str, str]] = []
+        if stage0.interview_json:
+            interview = [(t["question"], t["answer"]) for t in json.loads(stage0.interview_json)]
+        try:
+            response = await orchestrator.run_framing_analysis(
+                candidate, run.question, run.context, interview,
+                output_language=run.language, budget_guard=guard,
+            )
+        except ProviderGenerationError as exc:
+            if exc.estimated_cost_usd:
+                self.repo.record_stage0_cost(run_id, exc.estimated_cost_usd)
+            raise
+        try:
+            parsed = question_framing.parse_framing_analysis(response.text)
+        except question_framing.QuestionFramingParseError:
+            if response.estimated_cost_usd:
+                self.repo.record_stage0_cost(run_id, response.estimated_cost_usd)
+            raise
+        self.repo.update_stage0_framing_analysis(
+            run_id,
+            candidate=candidate,
+            analysis_json=question_framing.canonical_json(parsed),
+            estimated_cost_usd=response.estimated_cost_usd,
+        )
+        return parsed
+
+    def lock_question_framing(
+        self, run_id: str, *, final_question: str, success_criteria: str | None, skipped: bool = False,
+    ) -> None:
+        """The one commit marker for Stage 0 (see ADR 009). Reframings are
+        always options, never applied automatically -- `final_question` is
+        whatever the caller (CLI) collected from the user, defaulting to
+        the original question. Never mutates runs.question itself; see
+        _execute's effective_question, the only place this is consumed."""
+        self._require_stage0(run_id)
+        final_question = final_question.strip()
+        if not final_question:
+            raise ValueError("final_question must not be empty")
+        success_criteria = success_criteria.strip() if success_criteria else None
+        self.repo.lock_stage0(
+            run_id, final_question=final_question, success_criteria=success_criteria or None,
+            skipped=skipped,
+        )
 
     def check_readiness(
         self, profile: str, red_team_enabled: bool, *, force: bool = False
@@ -213,6 +346,19 @@ class DeliberationService:
             convergence=optional_response("convergence_analysis"),
             synthesis=response("synthesis"),
             context=record.context,
+            locked_question=(
+                record.stage0.final_question
+                if record.stage0 is not None and record.stage0.locked_at
+                else None
+            ),
+            success_criteria=(
+                record.stage0.success_criteria
+                if record.stage0 is not None and record.stage0.locked_at
+                else None
+            ),
+            question_framing_skipped=bool(
+                record.stage0 is not None and record.stage0.locked_at and record.stage0.skipped
+            ),
         )
 
     # -- execution ------------------------------------------------------
@@ -298,9 +444,19 @@ class DeliberationService:
             self.repo.update_run(run_id, status="failed")
             return self.get_run(run_id)
 
+        # A locked Stage 0 record (see ADR 009) supplies the reframed
+        # question instead of the user's original one -- run.question
+        # itself is NEVER mutated (it keeps meaning "what the user
+        # originally typed", exactly like every other immutable run field;
+        # see ADR 003/009). "Skip Stage 0" is a degenerate lock whose
+        # final_question equals the original, so no separate branch is
+        # needed for that case.
+        stage0 = self.repo.get_stage0(run_id)
         effective_question = run.question
+        if stage0 is not None and stage0.locked_at and stage0.final_question:
+            effective_question = stage0.final_question
         if run.context:
-            effective_question = f"{run.question}\n\nADDITIONAL CONTEXT:\n{run.context}"
+            effective_question = f"{effective_question}\n\nADDITIONAL CONTEXT:\n{run.context}"
 
         # A legacy run (working_language column added after it was created)
         # falls back to its own output language -- NOT "en" -- so every
@@ -320,10 +476,15 @@ class DeliberationService:
         # (0.0 for a fresh run; the real prior total for a resume/retry), so
         # a resumed run correctly continues counting against the same cap
         # rather than resetting it.
+        # Includes any already-spent Stage 0 cost (0.0 when Stage 0 was
+        # never enabled for this run) -- Stage 0 and the main pipeline share
+        # one budget pool, never two separate caps (see ADR 009).
         budget_usd = Decimal(run.max_run_cost_usd) if run.max_run_cost_usd else None
         budget_guard = RunBudgetGuard(
             budget_usd=budget_usd,
-            spent_usd=default_budget_from_float(self.repo.sum_stage_costs(run_id)),
+            spent_usd=default_budget_from_float(
+                self.repo.sum_stage_costs(run_id) + self.repo.sum_stage0_cost(run_id)
+            ),
         )
 
         for wave in WAVES:

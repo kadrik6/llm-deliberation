@@ -177,6 +177,20 @@ A `YES` in one column never implies a `YES` in another. "Offline verified" does 
 
 ---
 
+## 11. Stage 0 (question framing)
+
+Optional, off by default, CLI only (no web wizard yet) — see ADR 009
+(`docs/decisions/009-question-framing-stage0.md`). Explicitly excluded
+from the evaluation harness; nothing here implies the underlying
+hypothesis (a better-framed question makes deliberation more useful) is
+confirmed.
+
+| Capability | Offline | Live | Eval. evidence | Evidence | Commit / experiment / canary | Limitation |
+|---|---|---|---|---|---|---|
+| Stage 0 full flow: combined problem-type+interview call, then independent framing-critique+premortem for candidates A and B | YES | YES | N/A (explicitly excluded from the evaluation harness, by design — see ADR 009) | 75 offline tests across `test_question_framing.py`/`test_store_stage0.py`/`test_service_stage0.py`/`test_cli_stage0.py`/`test_report_markdown.py`/`test_web_stage0.py`. Live: all 3 calls parsed into their schema on the first try (no retries exist in this phase); Stage 0 cost $0.0411 vs. main-pipeline cost $0.2576 (total $0.2987, within the configured $0.50 cap); both the original and the locked question appeared in the CLI output, the Markdown export, and the web report route (`/runs/{id}/report`) | live run `1554006fa1c7` (profile `economy`, `--no-red-team`, `--max-cost 0.50`) | This run kept the original question at Lock (didn't exercise an actual reframe) and left the success criterion blank, so a genuinely reframed `final_question` and the "You Decide" success-criterion display remain offline-verified only, not yet live-confirmed |
+
+---
+
 ## What we can safely say publicly
 
 1. The system has been exercised end-to-end with real OpenAI and Anthropic APIs across multiple independent live runs (two release canaries, a live language probe, and two full evaluation experiments).

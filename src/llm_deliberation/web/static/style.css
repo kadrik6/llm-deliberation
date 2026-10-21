@@ -573,7 +573,8 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
    changed / Where they still disagree / Agreements / Remaining unknowns /
    You decide) -- same tokens as .stage-group/.final-answer, deliberately
    plain rather than a "wall of cards". */
-.what-changed, .disagreement-map, .agreements, .remaining-unknowns, .human-judgement {
+.what-changed, .disagreement-map, .agreements, .remaining-unknowns, .human-judgement,
+.locked-success-criterion {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
