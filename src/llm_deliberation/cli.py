@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 
 from llm_deliberation.config import PROFILES, Settings
@@ -12,6 +13,8 @@ from llm_deliberation.cost_budget import (
     parse_budget_usd,
 )
 from llm_deliberation.cost_report import CostReport
+from llm_deliberation.language_detect import detect_language
+from llm_deliberation.prompts import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES
 from llm_deliberation.providers import ProviderGenerationError
 from llm_deliberation.question_framing import FramingAnalysis, QuestionFramingParseError
 from llm_deliberation.report import save_report
@@ -41,6 +44,19 @@ def _parser() -> argparse.ArgumentParser:
         "--profile",
         choices=sorted(PROFILES),
         help="Model profile. Overrides LLM_PROFILE.",
+    )
+    parser.add_argument(
+        "--language",
+        choices=sorted(SUPPORTED_LANGUAGES),
+        default=None,  # resolved in _run(), after parsing, so the CLI can
+        # tell "explicitly passed" apart from "defaulted" -- see the
+        # Estonian-question refusal check in _run(), which only ever fires
+        # when this stayed None (--language genuinely omitted).
+        help="Output language for this run (en/et). If omitted, uses the "
+             "LLM_LANGUAGE env var, else 'en'. If omitted entirely and the "
+             "question is confidently detected as Estonian, the run is "
+             "refused with a hint to pass --language et explicitly -- this "
+             "app never silently infers a run's output language.",
     )
     parser.add_argument(
         "--red-team",
@@ -388,6 +404,38 @@ async def _run(args: argparse.Namespace) -> int:
         print("Error: question is empty.", file=sys.stderr)
         return 2
 
+    # --language explicitly beats LLM_LANGUAGE beats the hardcoded "en"
+    # fallback. language_explicit tracks whether the FLAG itself was passed
+    # (args.language stays None otherwise) -- the refusal check right below
+    # only ever fires when it wasn't, never when the user (or their own
+    # LLM_LANGUAGE env var) already made an explicit choice.
+    language_explicit = args.language is not None
+    language = args.language or os.getenv("LLM_LANGUAGE") or DEFAULT_LANGUAGE
+
+    # Refuse rather than silently default to English for a question that
+    # reads as confidently Estonian -- detect_language() (the same
+    # deterministic, no-network heuristic used for the working-language
+    # contract check) already refuses to guess on short, mixed, or
+    # ambiguous text (see language_detect.py's MIN_WORDS_FOR_CONFIDENCE),
+    # so this only ever fires on a genuinely confident signal, never a
+    # borderline one. Only checked when the resolved language is "en" --
+    # if LLM_LANGUAGE=et is already configured, there is no mismatch to
+    # warn about at all.
+    if not language_explicit and language == "en":
+        detected, _evidence = detect_language(question)
+        if detected == "et":
+            print(
+                "This question reads as confidently Estonian, but no "
+                "--language was given (output would default to English).",
+                file=sys.stderr,
+            )
+            print(
+                "Pass --language et to confirm Estonian output, or "
+                "--language en to confirm English anyway.",
+                file=sys.stderr,
+            )
+            return 2
+
     settings = Settings.load(
         profile_override=args.profile,
         red_team_override=args.red_team,
@@ -423,7 +471,8 @@ async def _run(args: argparse.Namespace) -> int:
         f"Profile={settings.profile} | "
         f"A={settings.openai_model} | "
         f"B={settings.anthropic_model} | "
-        f"red-team={red_team_status}"
+        f"red-team={red_team_status} | "
+        f"language={language}"
     )
 
     # Refuse to start rather than stop mid-run: a --max-cost already below
@@ -460,6 +509,7 @@ async def _run(args: argparse.Namespace) -> int:
             profile=settings.profile,
             red_team_enabled=settings.red_team_enabled,
             context=args.context,
+            language=language,
             max_run_cost_usd=args.max_cost,
             question_framing_enabled=args.question_framing,
         )
