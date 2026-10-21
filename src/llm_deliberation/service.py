@@ -682,8 +682,17 @@ class DeliberationService:
             # corrects any drift from the live record_actual() calls made
             # mid-stage (see providers.GeminiFallbackProvider.generate /
             # orchestrator.run_stage's recovery path) rather than compounding
-            # it further on the next wave's admission check.
-            budget_guard.resync(default_budget_from_float(wave_total_cost))
+            # it further on the next wave's admission check. Stage 0's
+            # already-spent cost (0.0 when Stage 0 was never enabled) must
+            # stay in this pool on every resync, not just the initial guard
+            # construction above -- otherwise this wave boundary would
+            # silently drop it from the shared budget, letting the main
+            # pipeline spend back into room Stage 0 had already used (see
+            # ADR 009: Stage 0 and the main pipeline share one pool, never
+            # two separate caps).
+            budget_guard.resync(
+                default_budget_from_float(wave_total_cost + self.repo.sum_stage0_cost(run_id))
+            )
 
             if run_failed:
                 break
