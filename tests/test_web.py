@@ -629,7 +629,7 @@ _SECTIONED_SYNTHESIS = (
 )
 
 
-def test_structured_synthesis_renders_prominent_headline_and_collapsible_rest(
+def test_structured_synthesis_renders_prominent_headline_and_expanded_rest(
     client, service, fake_orchestrator_state
 ):
     fake_orchestrator_state["responses"] = {
@@ -642,19 +642,38 @@ def test_structured_synthesis_renders_prominent_headline_and_collapsible_rest(
     body = detail.text
     assert '<p class="answer-lead-label">Final conclusion</p>' in body
     assert "Ship the phased rollout." in body
-    # The remaining sections are present but tucked into collapsible
-    # <details>, each labeled with the model's own heading text.
-    for heading in (
-        "Why this is the strongest answer",
-        "Strongest argument against it",
-        "Remaining uncertainty",
-        "What would change the recommendation",
+    # The remaining sections are present, each its own <details open> (still
+    # individually collapsible by the user, but never hidden by default --
+    # a real run's "Why this is the strongest answer" section reading as
+    # empty turned out to be exactly this, collapsed with no `open`, before
+    # this was fixed), labeled with the model's own heading text, and its
+    # body text actually present (not just the heading).
+    for heading, body_text in (
+        ("Why this is the strongest answer", "Both analyses converged on it."),
+        ("Strongest argument against it", "Regulatory risk remains."),
+        ("Remaining uncertainty", "Data residency law is unclear."),
+        ("What would change the recommendation", "New regulatory guidance."),
     ):
-        assert f"<summary>{heading}</summary>" in body
+        assert f"<details open>\n            <summary>{heading}</summary>" in body
+        assert body_text in body
     # The prominent headline itself is not also duplicated as a <details>.
     assert "<summary>Final conclusion</summary>" not in body
     # Full raw text is still preserved verbatim for copying.
     assert _SECTIONED_SYNTHESIS in body
+
+
+def test_structured_synthesis_export_includes_every_section(client, service, fake_orchestrator_state):
+    # Export renders straight from the stage's raw text (report.render_markdown),
+    # never through the detail page's section-splitting/collapsing -- so every
+    # section is present regardless of how the HTML page displays them.
+    fake_orchestrator_state["responses"] = {
+        "synthesis": {"model": "fake-model", "text": _SECTIONED_SYNTHESIS}
+    }
+    response = _submit(client, question="Q?", red_team=False)
+    run_id = str(response.url).rstrip("/").rsplit("/", 1)[-1]
+
+    export = client.get(f"/runs/{run_id}/export")
+    assert _SECTIONED_SYNTHESIS in export.text
 
 
 def test_unstructured_synthesis_falls_back_to_full_block_unsectioned(client, service):

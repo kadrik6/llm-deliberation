@@ -41,7 +41,7 @@
     {% if sections|length > 1 %}
       <div class="answer-details">
         {% for heading, body in sections[1:] %}
-          <details>
+          <details open>
             <summary>{{ heading }}</summary>
             <div class="markdown-body">{{ body }}</div>
           </details>
