@@ -312,6 +312,54 @@ def test_completed_stages_and_cost_survive_a_budget_block(
     assert critique_a.failure_reason == "run_budget_exceeded"
 
 
+def test_stage0_cost_stays_in_the_shared_budget_pool_across_wave_resyncs(
+    service, fake_orchestrator_state
+):
+    """Regression (ADR 009): _execute's per-wave budget_guard.resync() must
+    include Stage 0's already-spent cost on every resync, not just the
+    initial guard construction -- otherwise each wave boundary silently
+    drops it from the shared pool, letting the main pipeline spend back
+    into room Stage 0 had already used.
+
+    Numbers are chosen so the bug and the fix disagree on the outcome:
+    Stage 0 = $0.15, wave 1 (analysis_a + analysis_b) = $0.70, cap = $0.80.
+      - wave 1 alone ($0.70) fits under the cap with room to spare --
+        if Stage 0's cost were dropped at the post-wave-1 resync (the bug),
+        the guard would see $0.10 of remaining room and wrongly admit
+        critique_a_of_b.
+      - wave 1 + Stage 0 ($0.85) already exceeds the $0.80 cap -- correctly
+        counted, the guard has negative remaining room and must block
+        critique_a_of_b before any further call is made.
+    """
+    fake_orchestrator_state["upper_bound_cost_usd"] = Decimal("0.0001")
+    fake_orchestrator_state["responses"] = {
+        "question_framing": {"estimated_cost_usd": 0.15},
+        "analysis_a": {"estimated_cost_usd": 0.35},
+        "analysis_b": {"estimated_cost_usd": 0.35},
+    }
+
+    run_id = service.create_run(
+        "Q?", "economy", red_team_enabled=False, max_run_cost_usd="0.80",
+        question_framing_enabled=True,
+    )
+    asyncio.run(service.run_question_framing(run_id))
+    service.lock_question_framing(run_id, final_question="Q?", success_criteria=None)
+
+    record = asyncio.run(service.start_run(run_id))
+
+    analysis_a = next(s for s in record.stages if s.name == "analysis_a")
+    analysis_b = next(s for s in record.stages if s.name == "analysis_b")
+    assert analysis_a.status == "succeeded"
+    assert analysis_b.status == "succeeded"
+    assert record.estimated_total_cost_usd == pytest.approx(0.70)  # main pipeline only
+    assert record.stage0.estimated_cost_usd == pytest.approx(0.15)
+
+    critique_a = next(s for s in record.stages if s.name == "critique_a_of_b")
+    assert critique_a.failure_reason == "run_budget_exceeded"
+    assert "critique_a_of_b" not in fake_orchestrator_state["log"]
+    assert record.status == "failed"
+
+
 def test_budget_check_itself_does_not_alter_accumulated_cost(
     service, fake_orchestrator_state
 ):
