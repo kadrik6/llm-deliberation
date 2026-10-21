@@ -49,14 +49,26 @@ def test_a_real_openai_sdk_client_call_is_blocked_not_silently_allowed():
     """Reproduces the exact mistake this guard exists to prevent: a real
     OpenAI() client constructed with a (fake-looking, but not faked by
     FakeOrchestrator) key, actually attempting a call. Before this guard,
-    this made a real, auth-failed-but-real outbound HTTP request. The SDK
-    wraps the underlying connection error in its own APIConnectionError --
-    still a loud, unmistakable failure, not a silent success."""
-    from openai import APIConnectionError, OpenAI
+    this made a real, auth-failed-but-real outbound HTTP request to
+    OpenAI's actual production IP -- confirmed directly in CI, where this
+    test's first version failed because the installed openai/httpx version
+    there propagates the block raw instead of wrapping it in
+    APIConnectionError like the version in local dev does. Either way is a
+    loud, unmistakable failure, never a silent success -- so this asserts
+    on the underlying cause (walking __cause__) rather than one specific
+    wrapper exception type, to stay correct across SDK versions."""
+    from openai import OpenAI
 
     client = OpenAI(api_key="sk-this-should-never-reach-the-network", timeout=5.0, max_retries=0)
-    with pytest.raises(APIConnectionError):
+    with pytest.raises(Exception) as excinfo:
         client.models.retrieve("gpt-5.6-terra")
+
+    chain = []
+    exc: BaseException | None = excinfo.value
+    while exc is not None:
+        chain.append(str(exc))
+        exc = exc.__cause__
+    assert any(_BLOCKED_MESSAGE in msg for msg in chain)
 
 
 def test_api_keys_are_never_the_real_local_environment_values():
