@@ -188,7 +188,7 @@ def test_6_truncated_response_is_output_truncated_not_structured_output_invalid(
         def __init__(self):
             self.calls = 0
 
-        def generate(self, *, system, prompt):
+        def generate(self, *, system, prompt, max_output_tokens=None):
             self.calls += 1
             return ModelResponse(
                 provider="Anthropic", model=self.model,

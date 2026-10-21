@@ -13,9 +13,11 @@ from llm_deliberation import question_framing, readiness
 from llm_deliberation.config import PROFILES, Settings, default_red_team_enabled
 from llm_deliberation.cost_budget import (
     BudgetExceededError,
+    CostEstimate,
     RunBudgetGuard,
     default_budget_from_float,
     estimate_remaining_completion_reserve,
+    estimate_run_cost_range,
     parse_budget_usd,
 )
 from llm_deliberation.orchestrator import (
@@ -287,6 +289,32 @@ class DeliberationService:
         """
         settings = Settings.load(profile_override=profile, red_team_override=red_team_enabled)
         return readiness.check_run_readiness(settings, red_team_enabled=red_team_enabled, force=force)
+
+    def estimate_worst_case_cost(self, profile: str, red_team_enabled: bool) -> CostEstimate:
+        """Deterministic, declared-approximate worst-case pre-run estimate
+        for this profile/red-team configuration (see
+        cost_budget.estimate_run_cost_range) -- a preflight, like
+        check_readiness, never creates a run or spends anything.
+
+        Used to refuse starting a run whose max_run_cost_usd is already
+        below the run's own worst case (see cli.py/web/app.py), instead of
+        admitting it and discovering partway through a wave that it cannot
+        finish (see ADR 010's trade-off: raising MAX_OUTPUT_TOKENS makes
+        this worst case larger without changing real-world spend for a
+        normal response, so a budget that used to be sufficient may no
+        longer be -- catching that before any paid call is strictly better
+        than stopping mid-run with partial, sunk spend).
+        """
+        settings = Settings.load(profile_override=profile, red_team_override=red_team_enabled)
+        return estimate_run_cost_range(
+            openai_model=settings.openai_model,
+            anthropic_model=settings.anthropic_model,
+            gemini_model=settings.gemini_model,
+            convergence_provider=settings.convergence_provider,
+            convergence_model=settings.convergence_model,
+            red_team_enabled=red_team_enabled,
+            max_output_tokens=settings.max_output_tokens,
+        )
 
     def get_run(self, run_id: str) -> RunRecord:
         return self.repo.get_run_full(run_id)
@@ -630,6 +658,8 @@ class DeliberationService:
                             attempt_log=outcome.attempt_log,
                             estimated_cost_usd=outcome.estimated_cost_usd,
                             failure_reason=outcome.reason,
+                            input_tokens=outcome.input_tokens,
+                            output_tokens=outcome.output_tokens,
                         )
                         if outcome.reason == "provider_error":
                             # A genuine transport/API/config failure (not a
@@ -675,6 +705,8 @@ class DeliberationService:
                         language_contract_status=outcome.language_contract_status,
                         observed_language=outcome.observed_language,
                         language_recovery_attempted=outcome.language_recovery_attempted,
+                        input_tokens=outcome.usage.input_tokens,
+                        output_tokens=outcome.usage.output_tokens,
                     )
                     run_failed = True
                 else:

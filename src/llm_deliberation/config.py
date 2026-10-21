@@ -155,7 +155,24 @@ class Settings:
             openai_effort=os.getenv("OPENAI_EFFORT", "high"),
             anthropic_effort=os.getenv("ANTHROPIC_EFFORT", "high"),
             gemini_thinking_level=os.getenv("GEMINI_THINKING_LEVEL", "high"),
-            max_output_tokens=int(os.getenv("MAX_OUTPUT_TOKENS", "5000")),
+            # Raised from 5000 (see ADR 010 and the investigation that
+            # motivated it, run cc184d4f0302): at effort=high/thinking_level
+            # =high (the default everywhere), this ceiling is SHARED between
+            # reasoning/thinking tokens and the visible answer, not a bound
+            # on visible text alone -- a real analysis stage truncated twice
+            # at 5000, each attempt consuming ~99.7-99.8% of the cap before
+            # finishing. This does not increase real-world spend for a
+            # normal (non-truncating) response -- prompts already target a
+            # concise visible answer regardless of the ceiling -- but it
+            # does make the worst-case pre-run/admission-time cost ESTIMATE
+            # noticeably more conservative (see
+            # cost_budget.estimate_run_cost_range, which assumes 100% of
+            # this cap is used). See the new pre-run refusal gate (service.
+            # DeliberationService.estimate_worst_case_cost /
+            # cli.py+web/app.py) for how an under-sized --max-cost / web
+            # budget is now caught before a run starts, instead of
+            # part-way through.
+            max_output_tokens=int(os.getenv("MAX_OUTPUT_TOKENS", "16000")),
             # Explicit, bounded per-HTTP-attempt timeout and SDK-level retry
             # count for OpenAI/Anthropic/Gemini clients (see providers.py).
             # Both openai 3.13.0 and anthropic 1.5.0 otherwise default to a

@@ -714,6 +714,28 @@ def test_truncated_required_stage_fails_and_earlier_stages_survive(
     assert by_name["revision_b"].status == "succeeded"  # ran concurrently, unaffected
 
 
+def test_a_truncated_failed_stage_persists_its_real_token_counts(service, fake_orchestrator_state):
+    """Regression (run cc184d4f0302): a failed stage previously kept
+    input_tokens/output_tokens at 0 despite a real, paid call having used
+    real tokens -- forcing a later diagnosis to back-solve them from cost
+    and a reconstructed prompt. mark_stage_failed now persists them."""
+    from llm_deliberation.types import Usage
+
+    fake_orchestrator_state["responses"] = {
+        "revision_a": {
+            "incomplete_reason": "output_truncated",
+            "usage": Usage(input_tokens=973, output_tokens=4990),
+        }
+    }
+    run_id = service.create_run("Q?", "economy", red_team_enabled=True)
+    record = asyncio.run(service.start_run(run_id))
+
+    revision_a = next(s for s in record.stages if s.name == "revision_a")
+    assert revision_a.status == "failed"
+    assert revision_a.input_tokens == 973
+    assert revision_a.output_tokens == 4990
+
+
 def test_retry_after_truncation_only_reruns_the_failed_stage(service, fake_orchestrator_state):
     fake_orchestrator_state["responses"] = {
         "revision_a": {"incomplete_reason": "output_truncated"}

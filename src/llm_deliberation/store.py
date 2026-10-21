@@ -611,18 +611,33 @@ class Repository:
         language_contract_status: str | None = None,
         observed_language: str | None = None,
         language_recovery_attempted: bool = False,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
     ) -> None:
         # estimated_cost_usd accumulates -- see the matching note in
         # mark_stage_succeeded. A stage retried multiple times, each
         # incurring some paid-but-unusable cost before finally succeeding or
         # being abandoned, keeps every attempt's spend in the run total.
+        #
+        # input_tokens/output_tokens are OVERWRITTEN, not accumulated --
+        # mirroring mark_stage_succeeded's own convention (that method
+        # overwrites too), so a stage retried via retry_stage reflects its
+        # most recent attempt's token usage, the same way its successful
+        # counterpart would. Previously these stayed at their post-
+        # insert_stage default of 0 even when a real, paid call had
+        # genuinely used tokens (see the investigation that added this --
+        # run cc184d4f0302's truncated analysis_b had real cost but 0
+        # recorded tokens, forcing a back-solve from cost to even estimate
+        # them). 0 remains correct for a failure with no tokens to report
+        # (e.g. blocked by budget before any call was ever sent).
         self._conn.execute(
             "UPDATE stages SET status = 'failed', error = ?, completed_at = ?, "
             "requested_model = ?, fallback_used = ?, fallback_reason = ?, "
             "model_attempts = ?, attempt_log = ?, "
             "estimated_cost_usd = estimated_cost_usd + ?, failure_reason = ?, "
             "language_contract_status = ?, observed_language = ?, "
-            "language_recovery_attempted = ? "
+            "language_recovery_attempted = ?, "
+            "input_tokens = ?, output_tokens = ? "
             "WHERE id = ?",
             (
                 error,
@@ -637,6 +652,8 @@ class Repository:
                 language_contract_status,
                 observed_language,
                 int(language_recovery_attempted),
+                input_tokens,
+                output_tokens,
                 stage_id,
             ),
         )

@@ -272,7 +272,9 @@ def test_12_truncation_recovery_for_estonian_run_analysis_stays_english():
         def __init__(self):
             self.calls: list[str] = []
 
-        def generate(self, *, system: str, prompt: str) -> ModelResponse:
+        def generate(
+            self, *, system: str, prompt: str, max_output_tokens: int | None = None
+        ) -> ModelResponse:
             self.calls.append(system)
             incomplete = len(self.calls) == 1
             return ModelResponse(

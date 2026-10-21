@@ -430,6 +430,10 @@ def test_truncation_recovery_respects_budget():
     assert excinfo.value.reason == "run_budget_exceeded"
     assert excinfo.value.estimated_cost_usd == pytest.approx(0.05)  # sunk cost preserved
     assert provider.calls == 1  # the recovery call itself was never made
+    # The sunk (truncated, paid) attempt's tokens are preserved too, never
+    # dropped to 0 just because the retry itself was blocked by budget.
+    assert excinfo.value.input_tokens == 10
+    assert excinfo.value.output_tokens == 100
 
 
 def test_truncation_recovery_budget_check_uses_the_raised_cap_not_the_original(
