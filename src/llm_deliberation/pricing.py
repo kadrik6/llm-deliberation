@@ -3,12 +3,19 @@ from __future__ import annotations
 from llm_deliberation.types import Usage
 
 # USD per 1M tokens.
-# Snapshot: 2026-09-14.
+# Snapshot: 2026-10-22 (OpenAI: developers.openai.com/api/docs/pricing,
+# standard tier; Anthropic: first-party API rates). Models no longer in any
+# profile stay listed so older runs and the costs report keep pricing them.
 # Keep this table explicit and easy to update as provider pricing changes.
 PRICING: dict[str, tuple[float, float]] = {
+    "gpt-6-astra": (10.00, 50.00),
+    "gpt-6.1-sol": (2.00, 10.00),
     "gpt-5.6-sol": (4.00, 20.00),
     "gpt-5.6-terra": (2.00, 12.00),
     "gpt-5.6-luna": (0.20, 1.20),
+    "claude-fable-5-1": (10.00, 50.00),
+    "claude-opus-5-5": (4.00, 20.00),
+    "claude-sonnet-5-5": (2.00, 10.00),
     "claude-fable-5": (10.00, 50.00),
     "claude-opus-5": (5.00, 25.00),
     "claude-sonnet-5": (2.00, 10.00),

@@ -30,3 +30,18 @@ def test_max_output_tokens_still_respects_an_explicit_override(monkeypatch):
     monkeypatch.setenv("MAX_OUTPUT_TOKENS", "8000")
     settings = Settings.load(profile_override="economy", red_team_override=False)
     assert settings.max_output_tokens == 8000
+
+
+def test_every_profile_model_has_a_price():
+    """Regression: profile "max" used gpt-6-astra with no PRICING entry, so
+    its OpenAI-side spend was estimated and tracked as $0.00 and --max-cost
+    never constrained it. Every model a profile can select must be priced."""
+    from llm_deliberation.pricing import PRICING
+
+    unpriced = sorted(
+        model
+        for profile in config.PROFILES.values()
+        for model in profile.values()
+        if model not in PRICING
+    )
+    assert unpriced == []

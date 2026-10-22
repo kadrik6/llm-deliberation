@@ -7,22 +7,22 @@ from dotenv import load_dotenv
 
 
 PROFILES = {
-    # Strong everyday default without Fable's higher token price.
+    # Strong everyday default without the top tier's token price.
     "balanced": {
-        "openai_model": "gpt-5.6-sol",
-        "anthropic_model": "claude-opus-5",
+        "openai_model": "gpt-6.1-sol",
+        "anthropic_model": "claude-opus-5-5",
         "gemini_model": "gemini-3.8-flash",
     },
-    # Strongest verified Anthropic general-access model in this starter.
+    # Each provider's most capable general-access model.
     "max": {
-    "openai_model": "gpt-6-astra",
-    "anthropic_model": "claude-fable-5",
-    "gemini_model": "gemini-3.8-flash",
+        "openai_model": "gpt-6-astra",
+        "anthropic_model": "claude-fable-5-1",
+        "gemini_model": "gemini-3.8-flash",
     },
     # Cheaper profile for experimentation and prompt iteration.
     "economy": {
-        "openai_model": "gpt-5.6-terra",
-        "anthropic_model": "claude-sonnet-5",
+        "openai_model": "gpt-6.1-sol",
+        "anthropic_model": "claude-sonnet-5-5",
         "gemini_model": "gemini-3.8-flash",
     },
 }
