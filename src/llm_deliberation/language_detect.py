@@ -66,6 +66,15 @@ _EN_STOPWORDS: frozenset[str] = frozenset(
 # signal). Case-insensitive.
 _ET_DIACRITIC_CHARS: frozenset[str] = frozenset("õäöüšž")
 
+def has_estonian_letters(text: str) -> bool:
+    """True if `text` contains any of _ET_DIACRITIC_CHARS. A much weaker
+    signal than detect_language() -- an English text with an Estonian name
+    in it also matches -- so only for callers where a false positive is
+    cheap (e.g. the CLI asking the user to confirm --language before a
+    paid run), never for a verdict about model output."""
+    return any(ch in _ET_DIACRITIC_CHARS for ch in text.lower())
+
+
 _WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 _FENCED_CODE_RE = re.compile(r"```.*?```", re.DOTALL)
 _INLINE_CODE_RE = re.compile(r"`[^`\n]*`")

@@ -124,3 +124,33 @@ real-world short Estonian question that originally motivated this (the
 test explicitly asserts `detect_language()` itself returns "uncertain"
 for it, confirming the documented limitation rather than just asserting
 the CLI's behavior in isolation).
+
+## Amendment (review before merge): catch short questions, read `.env`
+
+Two changes to the decision above, made in review before this shipped.
+They supersede the "Why not try to catch the original real-world
+question" bullet and the matching trade-off and failure-mode lines.
+
+- **Short questions are now caught via Estonian-only letters.** Most real
+  CLI questions are well under 25 words, so a refusal that relies only on
+  `detect_language()` misses the very case that motivated it. The check
+  now also fires when `detect_language()` is uncertain but the question
+  contains any of `õäöüšž` (`language_detect.has_estonian_letters`). This
+  does not lower the shared threshold: `detect_language()` and the
+  working-language contract check are unchanged. The weaker signal is
+  used only here because the two errors cost very different amounts: a
+  false positive (an English question naming "Tõnis") costs one re-run
+  with `--language en`, a miss costs a whole paid run in the wrong
+  language. Remaining gap: a short Estonian question with none of those
+  letters ("Kas Eesti peaks makse muutma") still defaults to English.
+- **`LLM_LANGUAGE` in `.env` is now read.** The language was resolved
+  with `os.getenv` before anything had loaded `.env` (`Settings.load()`
+  does that later), so a value kept only in `.env` was ignored.
+  `config.default_language()` loads `.env` first, like
+  `default_profile()`.
+
+Tests added: the real 8-word question is refused; a short question
+without Estonian letters is not; `LLM_LANGUAGE=en` still refuses an
+Estonian question (`.env.example` ships that value, so it is not treated
+as a deliberate choice); `LLM_LANGUAGE=et` in `.env` alone is honoured.
+Each new test fails against the pre-amendment `cli.py`.

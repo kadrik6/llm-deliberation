@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import os
 import sys
 
-from llm_deliberation.config import PROFILES, Settings
+from llm_deliberation.config import PROFILES, Settings, default_language
 from llm_deliberation.cost_budget import (
     BudgetExceededError,
     InvalidBudgetError,
@@ -13,7 +12,7 @@ from llm_deliberation.cost_budget import (
     parse_budget_usd,
 )
 from llm_deliberation.cost_report import CostReport
-from llm_deliberation.language_detect import detect_language
+from llm_deliberation.language_detect import detect_language, has_estonian_letters
 from llm_deliberation.prompts import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES
 from llm_deliberation.providers import ProviderGenerationError
 from llm_deliberation.question_framing import FramingAnalysis, QuestionFramingParseError
@@ -404,29 +403,29 @@ async def _run(args: argparse.Namespace) -> int:
         print("Error: question is empty.", file=sys.stderr)
         return 2
 
-    # --language explicitly beats LLM_LANGUAGE beats the hardcoded "en"
-    # fallback. language_explicit tracks whether the FLAG itself was passed
-    # (args.language stays None otherwise) -- the refusal check right below
-    # only ever fires when it wasn't, never when the user (or their own
-    # LLM_LANGUAGE env var) already made an explicit choice.
+    # --language explicitly beats LLM_LANGUAGE (environment or .env) beats
+    # the hardcoded "en" fallback. language_explicit tracks whether the
+    # FLAG itself was passed (args.language stays None otherwise).
     language_explicit = args.language is not None
-    language = args.language or os.getenv("LLM_LANGUAGE") or DEFAULT_LANGUAGE
+    env_language = default_language()
+    language = args.language or env_language or DEFAULT_LANGUAGE
 
     # Refuse rather than silently default to English for a question that
-    # reads as confidently Estonian -- detect_language() (the same
-    # deterministic, no-network heuristic used for the working-language
-    # contract check) already refuses to guess on short, mixed, or
-    # ambiguous text (see language_detect.py's MIN_WORDS_FOR_CONFIDENCE),
-    # so this only ever fires on a genuinely confident signal, never a
-    # borderline one. Only checked when the resolved language is "en" --
-    # if LLM_LANGUAGE=et is already configured, there is no mismatch to
-    # warn about at all.
+    # looks Estonian. Fires whenever the --language flag was omitted and
+    # the run would be English -- including LLM_LANGUAGE=en, since
+    # .env.example ships that value and most users never chose it. Two
+    # signals, either is enough: detect_language()'s confident verdict
+    # (needs MIN_WORDS_FOR_CONFIDENCE words, so it misses most real
+    # questions, which are short), or any Estonian-only letter. The second
+    # is weak on its own -- an English question naming "Tõnis" matches --
+    # but a false positive here only costs re-running with --language en,
+    # while a miss costs a whole paid run in the wrong language.
     if not language_explicit and language == "en":
         detected, _evidence = detect_language(question)
-        if detected == "et":
+        if detected == "et" or (detected is None and has_estonian_letters(question)):
             print(
-                "This question reads as confidently Estonian, but no "
-                "--language was given (output would default to English).",
+                "This question looks Estonian, but no --language was given "
+                "(output would default to English).",
                 file=sys.stderr,
             )
             print(

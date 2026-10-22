@@ -154,7 +154,7 @@ def test_refusal_message_hints_at_the_fix(language_env, capsys):
     args = _args(question=_LONG_ESTONIAN_QUESTION)
     asyncio.run(cli._run(args))
     err = capsys.readouterr().err
-    assert "confidently Estonian" in err
+    assert "looks Estonian" in err
     assert "--language et" in err
     assert "--language en" in err
 
@@ -197,13 +197,10 @@ def test_an_english_question_is_never_refused(language_env):
     assert exit_code == 0
 
 
-def test_short_estonian_question_is_never_refused_even_though_it_is_estonian(language_env):
-    """Honest limitation, not a bug: detect_language() refuses to guess on
-    short text (see MIN_WORDS_FOR_CONFIDENCE) -- a false "mismatched"
-    verdict is worse than missing a genuinely short case. This is the
-    exact real-world question (run 22ad158a3b2d) that originally surfaced
-    the missing --language flag; the new refusal does not cover it, since
-    8 words is not enough for a confident verdict either way."""
+def test_short_estonian_question_is_refused_via_estonian_letters(language_env):
+    """The exact real-world question (run 22ad158a3b2d) that originally
+    surfaced the missing --language flag. Too short for detect_language()
+    to classify, so the refusal relies on its Estonian-only letters."""
     from llm_deliberation.language_detect import detect_language
 
     detected, _evidence = detect_language(_SHORT_ESTONIAN_QUESTION)
@@ -211,9 +208,49 @@ def test_short_estonian_question_is_never_refused_even_though_it_is_estonian(lan
 
     args = _args(question=_SHORT_ESTONIAN_QUESTION)
     exit_code = asyncio.run(cli._run(args))
-    assert exit_code == 0  # proceeds, defaulting to English, unrefused
+    assert exit_code == 2
+    assert language_env["log"] == []
+
+
+def test_short_question_without_estonian_letters_is_not_refused(language_env):
+    """Known gap: a short Estonian question with no õäöüšž and too few
+    words for detect_language() still defaults to English unrefused."""
+    args = _args(question="Kas Eesti peaks makse muutma")
+    assert asyncio.run(cli._run(args)) == 0
+
+
+def test_llm_language_en_env_var_is_still_refused_for_an_estonian_question(
+    language_env, monkeypatch
+):
+    """.env.example ships LLM_LANGUAGE=en, so that value is not treated as
+    a deliberate choice -- only the --language flag is."""
+    monkeypatch.setenv("LLM_LANGUAGE", "en")
+    args = _args(question=_SHORT_ESTONIAN_QUESTION)
+    assert asyncio.run(cli._run(args)) == 2
+
+
+def test_llm_language_in_dotenv_file_is_read(language_env, tmp_path, monkeypatch):
+    """LLM_LANGUAGE set only in .env (not exported) must still apply:
+    the language is resolved before Settings.load() would load .env."""
+    from dotenv import dotenv_values
+
+    from llm_deliberation import config as config_module
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("LLM_LANGUAGE=et\n", encoding="utf-8")
+
+    # Stand-in for load_dotenv() pointed at this test's own .env, going
+    # through monkeypatch so the value cannot leak into later tests.
+    def fake_load_dotenv(*_args, **_kwargs):
+        for key, value in dotenv_values(env_file).items():
+            monkeypatch.setenv(key, value)
+        return True
+
+    monkeypatch.setattr(config_module, "load_dotenv", fake_load_dotenv)
+    args = _args(question=_SHORT_ESTONIAN_QUESTION)
+    assert asyncio.run(cli._run(args)) == 0
 
     from llm_deliberation.service import DeliberationService
 
     record = DeliberationService().list_runs()[0]
-    assert record.language == "en"
+    assert record.language == "et"

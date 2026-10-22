@@ -74,6 +74,15 @@ def default_profile() -> str:
     return os.getenv("LLM_PROFILE", "balanced")
 
 
+def default_language() -> str | None:
+    """LLM_LANGUAGE from the environment or .env, or None when unset.
+    load_dotenv() first, like the other defaults above: a value that lives
+    only in .env must not be missed just because Settings.load() (which
+    also loads .env) runs later."""
+    load_dotenv()
+    return os.getenv("LLM_LANGUAGE") or None
+
+
 @dataclass(slots=True)
 class Settings:
     profile: str
