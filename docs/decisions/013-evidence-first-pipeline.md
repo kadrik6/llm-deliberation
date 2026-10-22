@@ -15,10 +15,12 @@ saamiseks?" -- point at one problem.
   model at roughly 5/10. Cross-critique improved the reasoning (it
   separated "balanced budget" from "deficit under 3%", withdrew an
   unsupported structural-deficit diagnosis), but factual errors went
-  through, and the critic introduced some of its own: a claim that land
-  values had not been reassessed since the early 2000s (a reassessment
-  took effect in 2024), a planned tax described as already in force, and
-  an excessive-deficit-procedure premise nobody checked. A wrong
+  through, and the critic introduced some of its own. The grader's own
+  web check (not independently re-verified here) flagged: a claim that
+  land values had not been reassessed since the early 2000s (it reported
+  a 2022 reassessment in use from 2024), a planned tax described as
+  already in force, and an excessive-deficit-procedure premise nobody
+  checked. A wrong
   correction delivered as critique ended up *more* credible than the
   original claim.
 - Manual run of the same flow in the chat apps (ChatGPT and Claude, both
