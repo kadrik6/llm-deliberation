@@ -131,6 +131,17 @@ the full pipeline has to beat.
 1. **Prompt-only discipline** (no new stages): claim tagging,
    typed critiques, evidence-gated revisions, synthesis rules. Cheapest
    way to find out how much the persuasion problem alone costs.
+   *Implemented in `prompts.py`.* With no evidence pack yet, claims carry
+   labels instead of `[E#]` ids: `[source: ...]`, `[established]`,
+   `[unverified]` (anything from the last two years), `[estimate]`,
+   `[assumption]`. A factual objection without a source becomes a
+   question to verify; a revision keeps an unsourced dispute visible as
+   `[unverified, disputed]`; convergence analysis no longer lists
+   differences of emphasis as unresolved disagreements; Stage 0's
+   interview also asks for scope, ranking criteria and trusted sources.
+   `python -m llm_deliberation.manual_prompts` exports these prompts for a
+   manual run in chat apps, so the phase can be evaluated before any paid
+   run.
 2. **`--context` evidence pack + `claim_verification`** (ADR 012 Option B).
 3. **`evidence_gathering` with capped web search** (ADR 012 Option A),
    including a priced, verified per-search fee in `RunBudgetGuard`.
