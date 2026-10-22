@@ -42,6 +42,7 @@ def _args(**overrides) -> argparse.Namespace:
     defaults = dict(
         question="Q?",
         profile="balanced",
+        language=None,
         red_team=True,
         context=None,
         output=None,
