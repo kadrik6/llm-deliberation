@@ -197,6 +197,26 @@ def language_recovery_instruction(stage_language: str = DEFAULT_LANGUAGE) -> str
     )
 
 
+# Claim discipline (ADR 013, phase 1): prompt-only rules that make every
+# factual statement auditable and stop a confident but unsourced critique
+# from overwriting a claim. Shared by the analysis, critique, revision and
+# synthesis prompts so the labels mean the same thing in every stage.
+_CLAIM_LABELS = """
+CLAIM LABELS
+Mark every material factual claim (a number, a date, a law or policy, a
+status such as "already in force") with one label:
+- [source: ...] -- supported by a source supplied in the question/context;
+  name it.
+- [established] -- stable, widely known fact unlikely to have changed.
+- [unverified] -- from memory and not checked. Use this for anything about
+  the last two years (laws, taxes, budgets, official forecasts, procedures):
+  your training data may be out of date there.
+- [estimate] -- your own calculation or rough sizing; state the basis.
+- [assumption] -- something you are taking as given.
+Never present an [unverified] or [estimate] figure as settled fact.
+""".strip()
+
+
 def independent_analysis(question: str) -> str:
     return f"""
 QUESTION
@@ -221,6 +241,15 @@ Output discipline:
 - Target roughly 1200-1800 words, preferably shorter. Finish comfortably
   within that target rather than using all available space -- an unfinished
   answer is worse than a shorter complete one.
+
+{_CLAIM_LABELS}
+
+If the question asks for the best options, rank them and give each a rough
+size of effect (in money, and as a share of the relevant total where that
+helps), labelled [estimate] with its basis. A labelled rough range is more
+useful to the decision-maker than no number: leave an option unsized only
+when you can state no basis at all, and then say which data would size it.
+Declining to rank is not caution -- it leaves the question unanswered.
 
 Return:
 1. Best current conclusion or recommendation.
@@ -257,6 +286,22 @@ Inspect:
 - practical implementation risks;
 - places where the candidate is probably right and should NOT be changed.
 
+Type every objection as one of:
+- FACTUAL -- a claim is wrong. Give the correct fact and its basis. If you
+  cannot point to a source supplied in the question/context, or to an
+  [established] fact, do NOT assert a counter-fact: write it as a QUESTION
+  to verify instead ("verify whether X is still the case"). A correction
+  from memory about recent laws, taxes, budgets or procedures is a
+  question, not a correction -- your memory may be the outdated one.
+- REASONING -- a logical gap, conflated concepts, an unsupported causal
+  claim, a ranking without a basis.
+  Challenge a labelled [estimate] by its basis (ask for a better basis or
+  a wider range); do not ask for it to be removed for being uncertain.
+- EMPHASIS -- a legitimate difference in priorities or framing, not an
+  error. Label it so the author need not "fix" it.
+Also flag factual claims in the candidate that carry no label or are
+labelled [established] but are not.
+
 Prioritize material issues over minor ones; do not manufacture criticism just
 to fill space. Target roughly 600-900 words, preferably shorter. Explain why
 each criticism matters.
@@ -287,7 +332,9 @@ Be concise: target roughly 500-800 words, preferably shorter.
 Return:
 1. Shared assumptions worth challenging.
 2. Blind spots neither candidate covered.
-3. Claims that especially need external verification.
+3. Claims that especially need external verification -- in particular any
+   claim both candidates state the same way without a supplied source:
+   agreement between two models is not verification.
 4. A genuinely different framing or alternative, if one exists.
 5. The single most important issue the final synthesizer should resolve.
 """.strip()
@@ -318,6 +365,15 @@ Revise your position after considering the feedback.
 Do not accept criticism automatically. Keep valid original reasoning, correct
 material weaknesses, and reject bad criticism when warranted.
 
+Criticism is not evidence. A FACTUAL objection replaces your claim only if
+it rests on a supplied source or an [established] fact. If it does not,
+keep both versions visible and mark the claim [unverified, disputed]
+rather than swapping one unverified claim for another. Accept REASONING
+objections on their merits. Treat EMPHASIS objections as a choice, not an
+error. Keep the claim labels on everything you carry forward. Do not
+drop a sized estimate to answer criticism of it: tighten its basis or
+widen its range instead, and keep the options ranked.
+
 Output discipline: state your revised position and what changed -- do not
 replay your full original reasoning again; refer back to it only where it
 changed. Focus on MATERIAL updates (a changed conclusion, a corrected error, a
@@ -327,7 +383,9 @@ Target roughly 600-900 words, preferably shorter.
 Return:
 1. Revised conclusion.
 2. What changed and why (only the material updates -- not a full restatement).
-3. Which criticism materially changed the answer, if any.
+3. Which criticism materially changed the answer, if any. For each
+   objection you received: accepted / rejected / left open as disputed,
+   with one line why.
 4. Remaining uncertainty.
 5. Strongest case against the revised conclusion.
 """.strip()
@@ -362,7 +420,17 @@ once, not one at a time) that would help the user sharpen this question
 before analysis begins. Cover, across the set: what decision depends on
 the answer; which options are already on the table; the user's real
 underlying goal; constraints (time, money, people); and what would show,
-in hindsight, that the decision was right. Do not answer these questions
+in hindsight, that the decision was right. Also cover, where they apply:
+- scope and definitions -- pin down terms the answer hinges on (for
+  example "state budget" vs "general government", which year, which
+  jurisdiction);
+- criteria -- what "best" means here (speed, cost, fairness, risk, ...), so
+  options can be ranked against something stated rather than assumed;
+- data and sources -- which figures the answer needs and which documents
+  the user has or trusts (official statistics, forecasts, laws). Say that
+  pasting them as context lets later stages check claims against them
+  instead of relying on model memory, which may be out of date.
+Keep the total at 5 to 8 questions. Do not answer these questions
 yourself -- the user will answer them.
 
 Respond with a single JSON object matching this schema exactly, and nothing
@@ -400,7 +468,9 @@ before any analysis of the question itself begins. Work independently --
 you have not seen another model's view of this. Your job has two parts.
 
 PART 1 -- FRAMING CRITIQUE
-List hidden assumptions behind this question. Offer 2-3 alternative ways to
+List hidden assumptions behind this question, including assumptions about
+data: facts the question takes for granted that may be out of date or
+that nobody has supplied. Offer 2-3 alternative ways to
 frame the underlying problem -- these are OPTIONS for the user to consider,
 never a recommendation; do not tell the user which one to pick. Say whether
 this looks like the right problem to be solving at all, with a short note.
@@ -470,6 +540,11 @@ Identify:
 3. Agreements the two candidates reached, whether or not they held them from
    the start.
 4. Disagreements that remain unresolved between the two revised positions.
+   List only differences that lead to a different recommendation or rest on
+   conflicting factual claims. A difference of emphasis or priority (e.g.
+   "spending cuts first" vs "act early on cuts") is not an unresolved
+   disagreement unless the two cannot both be done; and describe each
+   side's final position, not an objection it raised along the way.
 5. Whether the candidates converged, partially converged, diverged, or
    whether there is not enough information in what you were given to tell.
 6. Missing information that, if available, would likely help resolve a
@@ -551,6 +626,21 @@ Rules:
   whether the candidates agree.
 - If an important factual claim requires current external verification and none
   was supplied, say so rather than inventing certainty.
+- Keep the claim labels ([source: ...], [established], [unverified],
+  [estimate], [assumption]) on material facts in the final answer. State
+  as fact only [source: ...] and [established] claims. Where the candidates
+  disagree on a fact and neither has a source, say it is disputed and
+  unverified -- do not pick the more confident version.
+- If the question asks for the best options, give a ranked list with a
+  rough size of effect for each, carrying over the candidates' labelled
+  [estimate] figures and their basis; where the candidates' estimates
+  differ, show the range rather than choosing one. Leave an option
+  unranked only when no candidate gave any basis for its size, and say
+  which data would size it. Refusing to rank is not caution: it fails
+  the question. Uncertainty belongs in the labels and ranges, not in
+  withholding the answer.
+- In section 2, say which load-bearing claims are verified and which are
+  not.
 
 Structure:
 - If the request contains a concrete deliverable, write it out in full first,

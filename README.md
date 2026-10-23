@@ -346,6 +346,20 @@ sharing one database file.
 Maps to specific OpenAI/Anthropic/Gemini model IDs in
 `src/llm_deliberation/config.py`, overridable via `.env`.
 
+### Manual run in chat apps (no API cost)
+
+To try a prompt change before paying for a run, export the pipeline's real
+stage prompts as a paste-ready script and run it by hand in two chat apps
+(for example ChatGPT and Claude, with web search on):
+
+```bash
+python -m llm_deliberation.manual_prompts "Your question" --language et -o manual-run.md
+```
+
+The script covers optional question sharpening (Stage 0), independent
+analyses, cross-critique, revisions and the final answer, with placeholders
+for each earlier reply. No API calls are made.
+
 ### Bilingual support
 
 The web UI supports English and Estonian as two independent settings: the
