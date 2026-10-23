@@ -58,3 +58,31 @@ def test_stages_ask_for_a_ranked_sized_answer_not_a_checklist():
     assert "Do not\ndrop a sized estimate" in revision
     assert "Refusing to rank is not caution" in synthesis
     assert "Rank options only where" not in synthesis
+
+
+def test_verify_script_answers_checks_then_corrects():
+    script = manual_prompts.build_verify_script("Q?")
+    assert prompts.verified_answer("Q?") in script
+    assert prompts.claim_check("Q?", "<<PASTE V1 HERE>>") in script
+    assert prompts.apply_verified_corrections("Q?", "<<PASTE V1 HERE>>", "<<PASTE K HERE>>") in script
+    assert script.startswith("# Manual verify run")
+
+
+def test_checker_needs_a_source_to_call_a_claim_wrong():
+    check = prompts.claim_check("Q?", "A")
+    assert "only with a source you can name" in check
+    assert "Do not write your own" in check
+
+
+def test_main_writes_the_verify_script(tmp_path):
+    out = tmp_path / "verify.md"
+    assert manual_prompts.main(["Q?", "--pattern", "verify", "-o", str(out)]) == 0
+    assert out.read_text(encoding="utf-8").startswith("# Manual verify run")
+
+
+def test_synthesis_keeps_the_better_based_estimate_instead_of_merging_ranges():
+    # The 23.10.2026 eval: merging two answers' ranges into one wide range
+    # made the synthesis less coherent than a single model's answer.
+    synthesis = prompts.synthesis("Q?", "A2", "B2", None)
+    assert "Never merge different estimates" in synthesis
+    assert "show the range rather than choosing one" not in synthesis

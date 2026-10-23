@@ -7,6 +7,11 @@ change is tested by hand exactly as the pipeline would send it. Earlier
 stages' outputs are left as placeholders for the user to paste in.
 
     python -m llm_deliberation.manual_prompts "question" --language et -o script.md
+    python -m llm_deliberation.manual_prompts "question" --pattern verify -o verify.md
+
+Two patterns: "deliberate" (the pipeline's stages) and "verify" (one model
+answers with web search, the other checks its claims, the first applies
+only the sourced corrections; see prompts.verified_answer).
 """
 from __future__ import annotations
 
@@ -77,8 +82,41 @@ def build_script(question: str, *, language: str = prompts.DEFAULT_LANGUAGE, con
         ),
     ]
 
+    return _render("Manual deliberation run", question, system, steps)
+
+
+def build_verify_script(question: str, *, language: str = prompts.DEFAULT_LANGUAGE, context: str | None = None) -> str:
+    """The verify pattern as one Markdown document: answer, fact-check,
+    corrected answer. Step 1's reply is also the single-model baseline for
+    a blind comparison against step 3."""
+    if language not in prompts.SUPPORTED_LANGUAGES:
+        raise ValueError(f"Unknown language {language!r}. Choose one of: {', '.join(prompts.SUPPORTED_LANGUAGES)}")
+    full_question = question if not context else f"{question}\n\nCONTEXT\n{context}"
+    system = prompts.base_system(language, language)
+    steps: list[tuple[str, str, str]] = [
+        (
+            "1. Model A: answer",
+            "Model A (e.g. ChatGPT), new chat, web search on. Save the reply "
+            "as **V1**. V1 is also the single-model baseline for grading.",
+            prompts.verified_answer(full_question),
+        ),
+        (
+            "2. Model B: fact-check",
+            "Model B (e.g. Claude), new chat, web search on. Save the reply as **K**.",
+            prompts.claim_check(full_question, _paste("V1")),
+        ),
+        (
+            "3. Model A: apply the corrections",
+            "Same chat as step 1. Save the reply as **V2**. Grade V1 against V2 blind.",
+            prompts.apply_verified_corrections(full_question, _paste("V1"), _paste("K")),
+        ),
+    ]
+    return _render("Manual verify run", question, system, steps)
+
+
+def _render(heading: str, question: str, system: str, steps: list[tuple[str, str, str]]) -> str:
     parts = [
-        "# Manual deliberation run",
+        f"# {heading}",
         "",
         f"Question: {question}",
         "",
@@ -107,10 +145,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("question")
     parser.add_argument("--language", choices=sorted(prompts.SUPPORTED_LANGUAGES), default=prompts.DEFAULT_LANGUAGE)
     parser.add_argument("--context", help="Optional context/sources appended to the question.")
+    parser.add_argument("--pattern", choices=["deliberate", "verify"], default="deliberate")
     parser.add_argument("-o", "--output", help="Write to this file instead of stdout.")
     args = parser.parse_args(argv)
 
-    script = build_script(args.question, language=args.language, context=args.context)
+    build = build_verify_script if args.pattern == "verify" else build_script
+    script = build(args.question, language=args.language, context=args.context)
     if args.output:
         with open(args.output, "w", encoding="utf-8") as f:
             f.write(script)

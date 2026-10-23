@@ -154,6 +154,19 @@ the full pipeline has to beat.
    than ask for its removal, and tells revisions to keep sized estimates.
    The grader also missed an under-stated GDP figure, so one grader is
    not enough for the phase gate.
+
+   *Second manual evaluation (23.10.2026, same question, three graders:
+   two Gemini chats and Perplexity).* With the ranking fix, the
+   deliberated answers led on two graders, but Perplexity, the only grader
+   that checked facts against sources, put ChatGPT's own first answer
+   (web search on, 9/10) above the same model's deliberated final answer
+   (8/10). The final answer had merged two candidates' ranges into one
+   wide range and lost arithmetic coherence, and an `[unverified]` debt
+   figure carried through to the end was wrong. The gain came from the
+   prompt rules and web search, not from deliberation. The synthesis now
+   keeps the better-based estimate instead of merging ranges, and
+   `manual_prompts --pattern verify` exports the phase 4 candidate (answer,
+   source-backed fact-check, correction) for the next manual evaluation.
 2. **`--context` evidence pack + `claim_verification`** (ADR 012 Option B).
 3. **`evidence_gathering` with capped web search** (ADR 012 Option A),
    including a priced, verified per-search fee in `RunBudgetGuard`.
