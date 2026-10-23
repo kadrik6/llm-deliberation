@@ -86,3 +86,12 @@ def test_synthesis_keeps_the_better_based_estimate_instead_of_merging_ranges():
     synthesis = prompts.synthesis("Q?", "A2", "B2", None)
     assert "Never merge different estimates" in synthesis
     assert "show the range rather than choosing one" not in synthesis
+
+
+def test_crosscheck_checks_each_answer_by_its_own_model_and_the_other():
+    script = manual_prompts.build_crosscheck_script("Q?")
+    for writer in ("A", "B"):
+        for checker in ("A", "B"):
+            assert f"**K{writer}{checker}**" in script
+            assert prompts.apply_verified_corrections("Q?", f"<<PASTE {writer}0 HERE>>", f"<<PASTE K{writer}{checker} HERE>>") in script
+    assert script.count(prompts.verified_answer("Q?")) == 2

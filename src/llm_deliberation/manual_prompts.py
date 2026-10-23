@@ -9,9 +9,12 @@ stages' outputs are left as placeholders for the user to paste in.
     python -m llm_deliberation.manual_prompts "question" --language et -o script.md
     python -m llm_deliberation.manual_prompts "question" --pattern verify -o verify.md
 
-Two patterns: "deliberate" (the pipeline's stages) and "verify" (one model
+Three patterns: "deliberate" (the pipeline's stages), "verify" (one model
 answers with web search, the other checks its claims, the first applies
-only the sourced corrections; see prompts.verified_answer).
+only the sourced corrections; see prompts.verified_answer) and
+"crosscheck" (both models answer, and each answer is checked once by its
+own model and once by the other, to tell whether a gain comes from the
+check itself or from a second model).
 """
 from __future__ import annotations
 
@@ -114,6 +117,44 @@ def build_verify_script(question: str, *, language: str = prompts.DEFAULT_LANGUA
     return _render("Manual verify run", question, system, steps)
 
 
+def build_crosscheck_script(question: str, *, language: str = prompts.DEFAULT_LANGUAGE, context: str | None = None) -> str:
+    """The verify pattern run both ways, plus a self-check control: six
+    answers to grade blind (each model alone, after a self-check, after a
+    check by the other model)."""
+    if language not in prompts.SUPPORTED_LANGUAGES:
+        raise ValueError(f"Unknown language {language!r}. Choose one of: {', '.join(prompts.SUPPORTED_LANGUAGES)}")
+    full_question = question if not context else f"{question}\n\nCONTEXT\n{context}"
+    system = prompts.base_system(language, language)
+    steps: list[tuple[str, str, str]] = [
+        (
+            "1a. Model A: answer",
+            "Model A (e.g. ChatGPT), new chat, web search on. Save as **A0** (graded: A alone).",
+            prompts.verified_answer(full_question),
+        ),
+        (
+            "1b. Model B: answer",
+            "Model B (e.g. Claude), new chat, web search on. Save as **B0** (graded: B alone).",
+            prompts.verified_answer(full_question),
+        ),
+    ]
+    for writer, other in (("A", "B"), ("B", "A")):
+        for checker, kind in ((writer, "self"), (other, "cross")):
+            steps.append((
+                f"2. Model {checker} checks {writer}0 ({kind}-check)",
+                f"Model {checker}, **new** chat, web search on. Save as **K{writer}{checker}**.",
+                prompts.claim_check(full_question, _paste(f"{writer}0")),
+            ))
+    for writer, other in (("A", "B"), ("B", "A")):
+        for checker, label in ((writer, "self"), (other, "cross")):
+            steps.append((
+                f"3. Model {writer} applies K{writer}{checker}",
+                f"Model {writer}, **new** chat (so the two corrections stay independent). "
+                f"Save as **{writer}-{label}** (graded: {writer} after a {label}-check).",
+                prompts.apply_verified_corrections(full_question, _paste(f"{writer}0"), _paste(f"K{writer}{checker}")),
+            ))
+    return _render("Manual cross-check run", question, system, steps)
+
+
 def _render(heading: str, question: str, system: str, steps: list[tuple[str, str, str]]) -> str:
     parts = [
         f"# {heading}",
@@ -145,11 +186,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("question")
     parser.add_argument("--language", choices=sorted(prompts.SUPPORTED_LANGUAGES), default=prompts.DEFAULT_LANGUAGE)
     parser.add_argument("--context", help="Optional context/sources appended to the question.")
-    parser.add_argument("--pattern", choices=["deliberate", "verify"], default="deliberate")
+    parser.add_argument("--pattern", choices=["deliberate", "verify", "crosscheck"], default="deliberate")
     parser.add_argument("-o", "--output", help="Write to this file instead of stdout.")
     args = parser.parse_args(argv)
 
-    build = build_verify_script if args.pattern == "verify" else build_script
+    build = {"verify": build_verify_script, "crosscheck": build_crosscheck_script}.get(args.pattern, build_script)
     script = build(args.question, language=args.language, context=args.context)
     if args.output:
         with open(args.output, "w", encoding="utf-8") as f:
