@@ -44,3 +44,17 @@ def test_main_writes_the_file(tmp_path):
     out = tmp_path / "script.md"
     assert manual_prompts.main(["Q?", "--language", "et", "-o", str(out)]) == 0
     assert out.read_text(encoding="utf-8").startswith("# Manual deliberation run")
+
+
+def test_stages_ask_for_a_ranked_sized_answer_not_a_checklist():
+    # A blind eval on 22.10.2026 scored the deliberated answers below a
+    # single model because they refused to rank or size the options.
+    analysis = prompts.independent_analysis("Q?")
+    critique = prompts.critique("Q?", "A")
+    revision = prompts.revision("Q?", "A", "K", None)
+    synthesis = prompts.synthesis("Q?", "A2", "B2", None)
+    assert "Declining to rank is not caution" in analysis
+    assert "do not ask for it to be removed" in critique
+    assert "Do not\ndrop a sized estimate" in revision
+    assert "Refusing to rank is not caution" in synthesis
+    assert "Rank options only where" not in synthesis

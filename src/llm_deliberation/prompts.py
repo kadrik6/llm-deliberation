@@ -244,9 +244,12 @@ Output discipline:
 
 {_CLAIM_LABELS}
 
-If the question asks for the best options, give each option a rough size of
-effect with its basis ([estimate]), or say plainly which data would be
-needed to size it. Do not rank options you cannot size; say what is missing.
+If the question asks for the best options, rank them and give each a rough
+size of effect (in money, and as a share of the relevant total where that
+helps), labelled [estimate] with its basis. A labelled rough range is more
+useful to the decision-maker than no number: leave an option unsized only
+when you can state no basis at all, and then say which data would size it.
+Declining to rank is not caution -- it leaves the question unanswered.
 
 Return:
 1. Best current conclusion or recommendation.
@@ -292,6 +295,8 @@ Type every objection as one of:
   question, not a correction -- your memory may be the outdated one.
 - REASONING -- a logical gap, conflated concepts, an unsupported causal
   claim, a ranking without a basis.
+  Challenge a labelled [estimate] by its basis (ask for a better basis or
+  a wider range); do not ask for it to be removed for being uncertain.
 - EMPHASIS -- a legitimate difference in priorities or framing, not an
   error. Label it so the author need not "fix" it.
 Also flag factual claims in the candidate that carry no label or are
@@ -365,7 +370,9 @@ it rests on a supplied source or an [established] fact. If it does not,
 keep both versions visible and mark the claim [unverified, disputed]
 rather than swapping one unverified claim for another. Accept REASONING
 objections on their merits. Treat EMPHASIS objections as a choice, not an
-error. Keep the claim labels on everything you carry forward.
+error. Keep the claim labels on everything you carry forward. Do not
+drop a sized estimate to answer criticism of it: tighten its basis or
+widen its range instead, and keep the options ranked.
 
 Output discipline: state your revised position and what changed -- do not
 replay your full original reasoning again; refer back to it only where it
@@ -624,9 +631,14 @@ Rules:
   as fact only [source: ...] and [established] claims. Where the candidates
   disagree on a fact and neither has a source, say it is disputed and
   unverified -- do not pick the more confident version.
-- Rank options only where each has a sized effect with a stated basis.
-  Where the data to size them is missing, say which data, instead of
-  recommending where to "start".
+- If the question asks for the best options, give a ranked list with a
+  rough size of effect for each, carrying over the candidates' labelled
+  [estimate] figures and their basis; where the candidates' estimates
+  differ, show the range rather than choosing one. Leave an option
+  unranked only when no candidate gave any basis for its size, and say
+  which data would size it. Refusing to rank is not caution: it fails
+  the question. Uncertainty belongs in the labels and ranges, not in
+  withholding the answer.
 - In section 2, say which load-bearing claims are verified and which are
   not.
 

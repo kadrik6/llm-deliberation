@@ -142,6 +142,18 @@ the full pipeline has to beat.
    `python -m llm_deliberation.manual_prompts` exports these prompts for a
    manual run in chat apps, so the phase can be evaluated before any paid
    run.
+
+   *First manual evaluation (22.10.2026, one question, one blind
+   grader).* A single model scored highest (8.5 and 8.0); the two
+   deliberated final answers scored 6.8 and 6.5. They scored well on
+   honesty about uncertainty (9/10) but low on answering the question
+   (5 and 4/10), because the original rule "rank options only where each
+   is sized" made the synthesis drop the candidates' sized estimates and
+   return a checklist. The rule now asks for a ranked list with labelled
+   rough ranges, tells critics to challenge an estimate's basis rather
+   than ask for its removal, and tells revisions to keep sized estimates.
+   The grader also missed an under-stated GDP figure, so one grader is
+   not enough for the phase gate.
 2. **`--context` evidence pack + `claim_verification`** (ADR 012 Option B).
 3. **`evidence_gathering` with capped web search** (ADR 012 Option A),
    including a priced, verified per-search fee in `RunBudgetGuard`.
