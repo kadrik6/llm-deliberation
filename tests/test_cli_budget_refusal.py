@@ -59,7 +59,7 @@ def _args(**overrides) -> argparse.Namespace:
 
 
 def test_max_cost_below_worst_case_is_refused_before_any_run_is_created(budget_env):
-    args = _args(max_cost="1.00")  # balanced + red-team's real worst case is ~$2.98
+    args = _args(max_cost="1.00")  # balanced + red-team's real worst case is ~$2.01
     exit_code = asyncio.run(cli._run(args))
 
     assert exit_code == 2
@@ -76,12 +76,12 @@ def test_max_cost_below_worst_case_message_names_the_needed_amount(budget_env, c
     asyncio.run(cli._run(args))
     err = capsys.readouterr().err
     assert "--max-cost 1.00 is below" in err
-    assert "$2.9840" in err
+    assert "$2.0101" in err
     assert "ceiling, not expected spend" in err
 
 
 def test_max_cost_at_or_above_worst_case_is_accepted(budget_env):
-    # Comfortably above the real ~$2.98 worst case for balanced + red-team.
+    # Comfortably above the real ~$2.01 worst case for balanced + red-team.
     args = _args(max_cost="5.00")
     exit_code = asyncio.run(cli._run(args))
     assert exit_code == 0
@@ -139,4 +139,4 @@ def test_refusal_accounts_for_red_team_being_declined_via_the_gemini_prompt(
     assert exit_code == 2
     err = capsys.readouterr().err
     assert "red-team=off" in err
-    assert "$2.9232" in err  # the red-team-OFF estimate, not red-team-on's $2.9840
+    assert "$1.9493" in err  # the red-team-OFF estimate, not red-team-on's $2.0101

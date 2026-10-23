@@ -497,7 +497,7 @@ def test_budget_below_worst_case_is_refused_with_no_run_created(client, service,
 
     assert response.status_code == 400
     assert "below the estimated worst case" in response.text
-    assert "$2.9840" in response.text
+    assert "$2.0101" in response.text
     assert len(service.list_runs()) == before  # never created
 
 
@@ -545,7 +545,7 @@ def test_refusal_uses_the_final_red_team_state_after_gemini_blocked_choice(
     )
 
     assert response.status_code == 400
-    assert "$2.9232" in response.text  # the red-team-OFF estimate
+    assert "$1.9493" in response.text  # the red-team-OFF estimate
 
 
 def test_run_with_no_budget_shows_no_limit_on_run_detail(client):
