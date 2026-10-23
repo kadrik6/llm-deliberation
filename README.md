@@ -360,6 +360,11 @@ The script covers optional question sharpening (Stage 0), independent
 analyses, cross-critique, revisions and the final answer, with placeholders
 for each earlier reply. No API calls are made.
 
+`--pattern verify` exports a shorter alternative: one model answers with
+web search, the other fact-checks only that answer's load-bearing claims,
+and the first applies only the corrections backed by a source. The first
+answer doubles as the single-model baseline for a blind comparison.
+
 ### Bilingual support
 
 The web UI supports English and Estonian as two independent settings: the
