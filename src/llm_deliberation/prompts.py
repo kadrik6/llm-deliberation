@@ -216,6 +216,26 @@ status such as "already in force") with one label:
 Never present an [unverified] or [estimate] figure as settled fact.
 """.strip()
 
+_OPTION_RANKING = """
+If the question asks for the best options, rank them and give each a rough
+size of effect (in money, and as a share of the relevant total where that
+helps), labelled [estimate] with its basis. A labelled rough range is more
+useful to the decision-maker than no number: leave an option unsized only
+when you can state no basis at all, and then say which data would size it.
+Declining to rank is not caution -- it leaves the question unanswered.
+""".strip()
+
+# For a run in a chat app with web search on (manual_prompts' verify
+# script). The API pipeline has no search tool yet (ADR 012), so its
+# stages keep the stricter "[source: ...] = supplied source" rule.
+_WEB_SOURCES = """
+WEB SEARCH
+Use web search for every number the answer rests on (the size of the
+problem, the baseline, recent laws and forecasts). Label what you found
+[source: publisher, title, date, URL]. Prefer official and primary
+sources over news reports. Anything you did not find stays [unverified].
+""".strip()
+
 
 def independent_analysis(question: str) -> str:
     return f"""
@@ -244,12 +264,7 @@ Output discipline:
 
 {_CLAIM_LABELS}
 
-If the question asks for the best options, rank them and give each a rough
-size of effect (in money, and as a share of the relevant total where that
-helps), labelled [estimate] with its basis. A labelled rough range is more
-useful to the decision-maker than no number: leave an option unsized only
-when you can state no basis at all, and then say which data would size it.
-Declining to rank is not caution -- it leaves the question unanswered.
+{_OPTION_RANKING}
 
 Return:
 1. Best current conclusion or recommendation.
@@ -388,6 +403,97 @@ Return:
    with one line why.
 4. Remaining uncertainty.
 5. Strongest case against the revised conclusion.
+""".strip()
+
+
+# Verify pattern (ADR 013, phase 4 candidate): one model answers with web
+# search, a second checks only that answer's load-bearing claims against
+# sources, and the author corrects only what was shown wrong. No synthesis
+# step, so no blending of two answers' estimates. Used by the manual
+# verify script; a manual blind eval on 23.10.2026 found a single model
+# with web search beat the full deliberation on the same question.
+def verified_answer(question: str) -> str:
+    return f"""
+QUESTION
+{question}
+
+Answer the question directly: this is the answer the user will act on.
+A second reviewer will check your factual claims against sources.
+
+{_WEB_SOURCES}
+
+{_CLAIM_LABELS}
+
+{_OPTION_RANKING}
+
+Keep the arithmetic consistent: the sizes you rank must add up to any
+total you state, and the problem's size must use the same baseline.
+Target roughly 1000-1500 words.
+
+Return:
+1. Recommendation, with the ranked options and their sizes.
+2. Why: the few points that decide it.
+3. Which load-bearing claims are sourced and which are not.
+4. Strongest argument against the recommendation.
+5. What would change it.
+""".strip()
+
+
+def claim_check(question: str, answer: str) -> str:
+    return f"""
+ORIGINAL QUESTION
+{question}
+
+ANSWER TO CHECK
+{answer}
+
+You are a fact-checker, not a second author. Do not write your own
+answer and do not re-rank the options on preference.
+
+{_WEB_SOURCES}
+
+1. List the answer's load-bearing claims: the numbers and statuses its
+   recommendation or ranking depends on (baseline, problem size, each
+   option's size and basis, recent laws and forecasts). At most 12.
+2. Check each one with web search. For each give:
+   claim -- CONFIRMED / WRONG / OUTDATED / UNCHECKABLE -- the correct value
+   if different -- [source: publisher, title, date, URL].
+   Mark a claim WRONG or OUTDATED only with a source you can name. Without
+   one it is UNCHECKABLE: say what would settle it.
+3. Arithmetic: recompute every derived figure (shares of GDP, totals,
+   sums of ranked sizes). List each mismatch with the correct value.
+4. Missing: at most 3 options or facts the answer omits that would change
+   the ranking, each with a source or an [estimate] and its basis.
+   Leave out anything that would not change the ranking.
+""".strip()
+
+
+def apply_verified_corrections(question: str, answer: str, check: str) -> str:
+    return f"""
+ORIGINAL QUESTION
+{question}
+
+YOUR ANSWER
+{answer}
+
+FACT-CHECK OF YOUR ANSWER
+{check}
+
+Produce the final answer: your answer with the fact-check applied.
+- Replace every claim marked WRONG or OUTDATED with the sourced value, and
+  redo any figure or ranking that depended on it.
+- Fix every arithmetic mismatch.
+- Leave CONFIRMED claims as they are. Leave UNCHECKABLE claims, keeping
+  them labelled [unverified].
+- Add a missing option only if it has a source or a stated basis, and
+  rank it with the others.
+- Do not change anything else: the check is evidence about facts, not a
+  vote on your judgement.
+
+{_CLAIM_LABELS}
+
+Same structure as your answer. End with one short list: what the
+fact-check changed.
 """.strip()
 
 
@@ -633,8 +739,12 @@ Rules:
   unverified -- do not pick the more confident version.
 - If the question asks for the best options, give a ranked list with a
   rough size of effect for each, carrying over the candidates' labelled
-  [estimate] figures and their basis; where the candidates' estimates
-  differ, show the range rather than choosing one. Leave an option
+  [estimate] figures and their basis. Where the candidates' estimates
+  differ, keep the one with the better basis (a cited source beats memory;
+  a stated calculation beats an assertion) and say why; show both only
+  when their bases are equally strong. Never merge different estimates
+  into one wider range, and keep the arithmetic consistent: the sizes
+  you rank must add up to the totals you state. Leave an option
   unranked only when no candidate gave any basis for its size, and say
   which data would size it. Refusing to rank is not caution: it fails
   the question. Uncertainty belongs in the labels and ranges, not in
